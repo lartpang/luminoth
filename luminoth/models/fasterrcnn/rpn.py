@@ -135,10 +135,12 @@ class RPN(snt.AbstractModule):
 
                 If training is True, then some more Tensors are added to the
                 prediction dictionary to be used for calculating the loss.
-                训练的时候会有额外的一些预测用来计算损失?????
+                TODO: 训练的时候会有额外的一些预测用来计算损失
+                FIXME: 可以看下面的loss部分的介绍, 是需要这些值的
 
                 rpn_cls_prob: A Tensor with the probability of being
-                    background and foreground for each anchor.前景背景的概率
+                    background and foreground for each anchor.
+                    前景背景的概率, 这个没有下面的得分值重要
                 rpn_cls_score: A Tensor with the cls score of being background
                     and foreground for each anchor (the input for the softmax).
                     每个anchor的前景背景类别得分
@@ -159,6 +161,8 @@ class RPN(snt.AbstractModule):
         # We start with a common conv layer applied to the feature map.
         # 开始进入回归与分类各自的RPN分支
         self._instantiate_layers()
+        # 将anchor和RPN预测转化为原始图像上的目标的提案
+        # TODO: 两个函数都得看下, 具体实现了啥, 以及所谓的 target 代表什么
         self._proposal = RPNProposal(
             self._num_anchors, self._config.proposals, debug=self._debug
         )
@@ -198,40 +202,50 @@ class RPN(snt.AbstractModule):
         prediction_dict['rpn_cls_prob'] = rpn_cls_prob
         prediction_dict['rpn_cls_score'] = rpn_cls_score
 
-        # 与上面类似的操作
+        # 与上面类似的操作, 进行了把各个anchor全部展开
         # Flatten bounding box delta prediction for easy manipulation.
         # We end up with `rpn_bbox_pred` having shape (H * W * num_anchors, 4).
         rpn_bbox_pred = tf.reshape(rpn_bbox_pred_original, [-1, 4])
 
+        # 数据存档
         prediction_dict['rpn_bbox_pred'] = rpn_bbox_pred
 
         # We have to convert bbox deltas to usable bounding boxes and remove
         # redundant ones using Non Maximum Suppression (NMS).
+        # 将bbox增量转换为可用的边界框并使用NMS删除冗余
+        # 这些操作都在self._proposal中实现了, 输出来的就是调整处理后的山下来的结果
+        # TODO: 需要阅读这里的代码, 如何实现的边框转换和NMS处理
         proposal_prediction = self._proposal(
             rpn_cls_prob, rpn_bbox_pred, all_anchors, im_shape)
 
+        # 数据存档
         prediction_dict['proposals'] = proposal_prediction['proposals']
         prediction_dict['scores'] = proposal_prediction['scores']
 
+        # TODO: 关于debug参数, 有何作用?
         if self._debug:
             prediction_dict['proposal_prediction'] = proposal_prediction
 
         if gt_boxes is not None:
             # When training we use a separate module to calculate the target
             # values we want to output.
+            # 训练的时候, 使用一个独立的模块来计算想要的目标输出值
             (rpn_cls_target, rpn_bbox_target,
              rpn_max_overlap) = self._anchor_target(
                 all_anchors, gt_boxes, im_shape
             )
 
+            # 数据存档
             prediction_dict['rpn_cls_target'] = rpn_cls_target
             prediction_dict['rpn_bbox_target'] = rpn_bbox_target
 
+            # TODO: 这里的rpn_max_overlap代表的是什么
             if self._debug:
                 prediction_dict['rpn_max_overlap'] = rpn_max_overlap
                 variable_summaries(rpn_bbox_target, 'rpn_bbox_target', 'full')
 
         # Variables summaries.
+        # 可视化时使用的数据摘要
         variable_summaries(prediction_dict['scores'], 'rpn_scores', 'reduced')
         variable_summaries(rpn_cls_prob, 'rpn_cls_prob', 'reduced')
         variable_summaries(rpn_bbox_pred, 'rpn_bbox_pred', 'reduced')
@@ -262,11 +276,21 @@ class RPN(snt.AbstractModule):
                 * 0: for negative labels
                 * -1: for labels we should ignore.
                 Shape: (num_anchors, )
+                对于anchor的真实标记, 这里应该是以IoU来判定的:
+                对每个proposal，计算其与所有ground truth的重叠比例IoU, 筛选出与每个
+                proposal重叠比例最大的ground truth.
+                如果proposal的最大IoU大于0.5则为目标(前景), 标签值(label)为对应
+                ground truth的目标分类如果IoU小于0.5且大于0.1则为背景，标签值为0
+                todo: 这里的-1该如何理解?
             rpn_bbox_target: Bounding box output delta target for rpn.
                 Shape: (num_anchors, 4)
+                这里输出的边界框的目标偏移量.
+                todo: 这里应该怎么理解?
             rpn_bbox_pred: Bounding box output delta prediction for rpn.
                 Shape: (num_anchors, 4)
+                边界框的输出预测偏移量
         Returns:
+            返回一个多任务损失
             Multiloss between cls probability and bbox target.
         """
 
@@ -281,24 +305,33 @@ class RPN(snt.AbstractModule):
             rpn_cls_target = tf.cast(tf.reshape(
                 rpn_cls_target, [-1]), tf.int32, name='rpn_cls_target')
             # Transform to boolean tensor mask for not ignored.
+            # 返回不应该被忽略的标签的逻辑张量, 可以用来作为一个实际需要处理的标签的
+            # 掩膜
             labels_not_ignored = tf.not_equal(
                 rpn_cls_target, -1, name='labels_not_ignored')
 
             # Now we only have the labels we are going to compare with the
             # cls probability.
+            # 这里的掩膜函数可以提取张量里的对应于掩膜真值的位置上的数值, 进而获得将
+            # 要用来比较的类别概率和标签
             labels = tf.boolean_mask(rpn_cls_target, labels_not_ignored)
             cls_score = tf.boolean_mask(rpn_cls_score, labels_not_ignored)
 
             # We need to transform `labels` to `cls_score` shape.
             # convert [1, 0] to [[0, 1], [1, 0]] for ce with logits.
+            # 对于各个类别的分数匹配对应的标签, 对标签进行one-hot编码
+            # todo: 目的是什么
             cls_target = tf.one_hot(labels, depth=2)
 
             # Equivalent to log loss
+            # 计算类别的对数损失, 这里使用的是softmax交叉熵的形式,
+            # 计算labels和logits的交叉熵
             ce_per_anchor = tf.nn.softmax_cross_entropy_with_logits_v2(
                 labels=cls_target, logits=cls_score
             )
             prediction_dict['cross_entropy_per_anchor'] = ce_per_anchor
 
+            # 计算回归损失
             # Finally, we need to calculate the regression loss over
             # `rpn_bbox_target` and `rpn_bbox_pred`.
             # We use SmoothL1Loss.
@@ -307,6 +340,7 @@ class RPN(snt.AbstractModule):
 
             # We only care for positive labels (we ignore backgrounds since
             # we don't have any bounding box information for it).
+            # 只用正样本, 来计算回归损失
             positive_labels = tf.equal(rpn_cls_target, 1)
             rpn_bbox_target = tf.boolean_mask(rpn_bbox_target, positive_labels)
             rpn_bbox_pred = tf.boolean_mask(rpn_bbox_pred, positive_labels)
@@ -337,6 +371,7 @@ class RPN(snt.AbstractModule):
             tf.summary.scalar(
                 'foreground_samples', tf.shape(rpn_bbox_target)[0], ['rpn'])
 
+            # 计算均值
             return {
                 'rpn_cls_loss': tf.reduce_mean(ce_per_anchor),
                 'rpn_reg_loss': tf.reduce_mean(reg_loss_per_anchor),
