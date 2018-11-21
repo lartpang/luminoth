@@ -45,6 +45,7 @@ class RPN(snt.AbstractModule):
         )
         # According to Faster RCNN paper we need to initialize layers with
         # "from a zero-mean Gaussian distribution with standard deviation 0.01
+        # 初始化分类器,预测器,以及一些正则化参数
         self._cls_initializer = get_initializer(
             config.cls_initializer, seed=seed
         )
@@ -58,6 +59,7 @@ class RPN(snt.AbstractModule):
         self._l1_sigma = config.l1_sigma
 
         # We could use normal relu without any problems.
+        # 确定RPN的激活函数, 这里使用正常ReLU
         self._rpn_activation = get_activation_function(
             config.activation_function
         )
@@ -65,7 +67,12 @@ class RPN(snt.AbstractModule):
         self._config = config
 
     def _instantiate_layers(self):
-        """Instantiates all convolutional modules used in the RPN."""
+        """
+        Instantiates all convolutional modules used in the RPN.
+        创建RPN中的层结构, 即所谓的实例化检具体的层
+        """
+
+        # 3x3的卷基层
         self._rpn = Conv2D(
             output_channels=self._num_channels,
             kernel_shape=self._kernel_shape,
@@ -74,24 +81,29 @@ class RPN(snt.AbstractModule):
             name='conv'
         )
 
+        # 分类分支, 输出的通道数目是 2k(k即为anchors数目)
         self._rpn_cls = Conv2D(
             output_channels=self._num_anchors * 2, kernel_shape=[1, 1],
             initializers={'w': self._cls_initializer},
             regularizers={'w': self._regularizer},
-            padding='VALID', name='cls_conv'
+            padding='VALID',
+            name='cls_conv'
         )
 
         # BBox prediction is 4 values * number of anchors.
+        # 预测分支, 输出通道数目为 4k
         self._rpn_bbox = Conv2D(
             output_channels=self._num_anchors * 4, kernel_shape=[1, 1],
             initializers={'w': self._bbox_initializer},
             regularizers={'w': self._regularizer},
-            padding='VALID', name='bbox_conv'
+            padding='VALID',
+            name='bbox_conv'
         )
 
     def _build(self, conv_feature_map, im_shape, all_anchors,
                gt_boxes=None, is_training=False):
         """Builds the RPN model subgraph.
+        构建RPN模型计算图, 对应的是RPN的输入输出
 
         Args:
             conv_feature_map: A Tensor with the output of some pretrained
@@ -99,16 +111,21 @@ class RPN(snt.AbstractModule):
                 `[1, feature_map_height, feature_map_width, depth]` where depth
                 is 512 for the default layer in VGG and 1024 for the default
                 layer in ResNet.
+                按照VGG理解, 这里是conv5-3的卷积特征图, 特征是512维
             im_shape: A Tensor with the shape of the original image.
+                原始图像大小, 可能需要来确定缩小的比例.
             all_anchors: A Tensor with all the anchor bounding boxes. Its shape
                 should be
                 [feature_map_height * feature_map_width * total_anchors, 4]
+                这个是输入的对应的所有的anchors候选
             gt_boxes: A Tensor with the ground-truth boxes for the image.
                 Its dimensions should be `[total_gt_boxes, 5]`, and it should
                 consist of [x1, y1, x2, y2, label], being (x1, y1) -> top left
                 point, and (x2, y2) -> bottom right point of the bounding box.
+                真实标签使用左上和右下角确定的
 
         Returns:
+            返回预测值和对应的类别
             prediction_dict: A dict with the following keys:
                 proposals: A Tensor with a variable number of proposals for
                     objects on the image.
@@ -118,21 +135,29 @@ class RPN(snt.AbstractModule):
 
                 If training is True, then some more Tensors are added to the
                 prediction dictionary to be used for calculating the loss.
+                训练的时候会有额外的一些预测用来计算损失?????
 
                 rpn_cls_prob: A Tensor with the probability of being
-                    background and foreground for each anchor.
+                    background and foreground for each anchor.前景背景的概率
                 rpn_cls_score: A Tensor with the cls score of being background
                     and foreground for each anchor (the input for the softmax).
+                    每个anchor的前景背景类别得分
                 rpn_bbox_pred: A Tensor with the bounding box regression for
                     each anchor.
+                    边界框回归结果
                 rpn_cls_target: A Tensor with the target for each of the
                     anchors. The shape is [num_anchors,].
+                    分类目标, 不明白这里所谓的"target"代表什么??????
                 rpn_bbox_target: A Tensor with the target for each of the
                     anchors. In case of ignoring the anchor for the target then
                     we still have a bbox target for each anchors, and it's
                     filled with zeroes when ignored.
+                    这里是边界框目标.如果对于目标忽略了anchor, 那么对于每个anchor,
+                    我们还是会有一个边界框目标, 当他被忽略时, 将会用0填充?????
+
         """
         # We start with a common conv layer applied to the feature map.
+        # 开始进入回归与分类各自的RPN分支
         self._instantiate_layers()
         self._proposal = RPNProposal(
             self._num_anchors, self._config.proposals, debug=self._debug
@@ -145,26 +170,35 @@ class RPN(snt.AbstractModule):
 
         # Get the RPN feature using a simple conv net. Activation function
         # can be set to empty.
+        # 得到第一个3x3卷积的结果, 后加了个ReLU激活函数
         rpn_conv_feature = self._rpn(conv_feature_map)
         rpn_feature = self._rpn_activation(rpn_conv_feature)
 
         # Then we apply separate conv layers for classification and regression.
+        # 获得类别得分和边界框预测, 这里各自只是经过了一次1x1的卷积, 就直接得到结果.
         rpn_cls_score_original = self._rpn_cls(rpn_feature)
         rpn_bbox_pred_original = self._rpn_bbox(rpn_feature)
         # rpn_cls_score_original has shape (1, H, W, num_anchors * 2)
         # rpn_bbox_pred_original has shape (1, H, W, num_anchors * 4)
         # where H, W are height and width of the pretrained feature map.
+        # 因为使用的是3x3 padding=1 以及 1x1的卷积, 所以宽高不变, 而且这里也不能变,
+        # 因为还要与原始的特征图所对应
 
         # Convert (flatten) `rpn_cls_score_original` which has two scalars per
         # anchor per location to be able to apply softmax.
+        # 这里的操作是实现了一个flatten的操作, 但是对于每个anchor都有对应的两个值
+        # 也就是前景和背景的概率(目标/非目标)
         rpn_cls_score = tf.reshape(rpn_cls_score_original, [-1, 2])
         # Now that `rpn_cls_score` has shape (H * W * num_anchors, 2), we apply
         # softmax to the last dim.
+        # 对每个anchors应用一个softmax分类器得到类别预测
         rpn_cls_prob = tf.nn.softmax(rpn_cls_score)
 
+        # 数据存档
         prediction_dict['rpn_cls_prob'] = rpn_cls_prob
         prediction_dict['rpn_cls_score'] = rpn_cls_score
 
+        # 与上面类似的操作
         # Flatten bounding box delta prediction for easy manipulation.
         # We end up with `rpn_bbox_pred` having shape (H * W * num_anchors, 4).
         rpn_bbox_pred = tf.reshape(rpn_bbox_pred_original, [-1, 4])

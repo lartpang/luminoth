@@ -21,13 +21,13 @@ class RCNN(snt.AbstractModule):
     Steps:
         1. Region of Interest Pooling. Extract features from the feature map
            (based on the proposals) and convert into fixed size tensors
-           (applying extrapolation).
+           (applying extrapolation).RoI池化
         2. Two fully connected layers generate a smaller tensor for each
-           region.
+           region.雙層全連接
         3. A fully conected layer outputs the probability distribution over the
            classes (plus a background class), and another fully connected layer
            outputs the bounding box regressions (one 4-d regression for each of
-           the possible classes).
+           the possible classes).一個輸出概率, 一個輸出迴歸
 
     Using the class probability, filter regions classified as background. For
     the remaining regions, use the class probability together with the
@@ -118,6 +118,8 @@ class RCNN(snt.AbstractModule):
         """
         Classifies & refines proposals based on the pooled feature map.
 
+        基于得出的池化特征图来进行分类优化提案
+
         Args:
             conv_feature_map: The feature map of the image, extracted
                 using the pretrained network.
@@ -149,6 +151,7 @@ class RCNN(snt.AbstractModule):
 
         prediction_dict = {'_debug': {}}
 
+        # 真实数据存在
         if gt_boxes is not None:
             proposals_target, bbox_offsets_target = self._rcnn_target(
                 proposals, gt_boxes)
