@@ -106,7 +106,7 @@ class RPNProposal(snt.AbstractModule):
                 all_scores = tf.boolean_mask(all_scores, anchor_filter)
 
         # Decode boxes
-        # TODO: 需要查看decode的代码
+        # 从参考的anchors和预测的偏移量获得最终预测的原图的框坐标
         all_proposals = decode(all_anchors, rpn_bbox_pred)
 
         # Filter proposals with less than threshold probability.
@@ -142,7 +142,7 @@ class RPNProposal(snt.AbstractModule):
 
         # Run clipping of proposals after running NMS.
         # 不在NMS后，而是在其前运行提案剪裁
-        # TODO: 查看clip_boxes的用处
+        # clip_boxes对于位于图像区域之外的提案框进行了一定的限制
         if not self._clip_after_nms:
             # Clip proposals to the image.
             unsorted_proposals = clip_boxes(unsorted_proposals, im_shape)

@@ -66,7 +66,7 @@ class RPN(snt.AbstractModule):
 
         self._config = config
 
-    def _instantiate_layers(self):
+    def _instantiate_la+yers(self):
         """
         Instantiates all convolutional modules used in the RPN.
         创建RPN中的层结构, 即所谓的实例化检具体的层
@@ -162,10 +162,19 @@ class RPN(snt.AbstractModule):
         # 开始进入回归与分类各自的RPN分支
         self._instantiate_layers()
         # 将anchor和RPN预测转化为原始图像上的目标的提案
-        # TODO: 两个函数都得看下, 具体实现了啥, 以及所谓的 target 代表什么
         self._proposal = RPNProposal(
             self._num_anchors, self._config.proposals, debug=self._debug
         )
+
+        # Tuple of the tensors of:
+        #     labels: (1, 0, -1) for each anchor.
+        #         Shape (num_anchors, 1)
+        #     bbox_targets: 4d bbox targets as specified by paper.
+        #         Shape (num_anchors, 4)
+        #         图像内部的anchors对应的真实值相对的偏移量和缩放量
+        #     max_overlaps: Max IoU overlap with ground truth boxes.
+        #         Shape (num_anchors, 1)
+        #         每个anchor对应的IoU最大的真实框的索引
         self._anchor_target = RPNTarget(
             self._num_anchors, self._config.target, seed=self._seed
         )
@@ -214,7 +223,6 @@ class RPN(snt.AbstractModule):
         # redundant ones using Non Maximum Suppression (NMS).
         # 将bbox增量转换为可用的边界框并使用NMS删除冗余
         # 这些操作都在self._proposal中实现了, 输出来的就是调整处理后的山下来的结果
-        # TODO: 需要阅读这里的代码, 如何实现的边框转换和NMS处理
         proposal_prediction = self._proposal(
             rpn_cls_prob, rpn_bbox_pred, all_anchors, im_shape)
 
@@ -230,6 +238,7 @@ class RPN(snt.AbstractModule):
             # When training we use a separate module to calculate the target
             # values we want to output.
             # 训练的时候, 使用一个独立的模块来计算想要的目标输出值
+            # labels, bbox_targets, max_overlap
             (rpn_cls_target, rpn_bbox_target,
              rpn_max_overlap) = self._anchor_target(
                 all_anchors, gt_boxes, im_shape
@@ -240,6 +249,7 @@ class RPN(snt.AbstractModule):
             prediction_dict['rpn_bbox_target'] = rpn_bbox_target
 
             # TODO: 这里的rpn_max_overlap代表的是什么
+            # FIXME: 表示anchors对应的最大的IoU的真实框索引
             if self._debug:
                 prediction_dict['rpn_max_overlap'] = rpn_max_overlap
                 variable_summaries(rpn_bbox_target, 'rpn_bbox_target', 'full')

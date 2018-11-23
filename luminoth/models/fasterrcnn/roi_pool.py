@@ -8,27 +8,34 @@ ROI_POOLING = 'roi_pooling'
 
 class ROIPoolingLayer(snt.AbstractModule):
     """ROIPoolingLayer applies ROI Pooling (or tf.crop_and_resize).
+    构建RoI Pooliing层
 
     RoI pooling or RoI extraction is used to extract fixed size features from a
     variable sized feature map using variabled sized bounding boxes. Since we
     have proposals of different shapes and sizes, we need a way to transform
     them into a fixed size Tensor for using FC layers.
+    从可变大小的特征图中提取固定大小的特征来使用可变大小的边界框. 为全连接层固定输入大小
 
     There are two basic ways to do this, the original one in the FasterRCNN's
     paper is RoI Pooling, which as the name suggests, it maxpools directly from
     the region of interest, or proposal, into a fixed size Tensor.
+    有两个基本的方法来处理:
+    原始的方式是使用RoI Pooling, 如论文所述, 这个正如名字所暗示, 直接最大汇聚感兴趣区域.
 
     The alternative way uses TensorFlow's image utility operation called,
     `crop_and_resize` which first crops an Tensor using a normalized proposal,
     and then applies extrapolation to resize it to the desired size,
     generating a fixed size Tensor.
+    另一个方式是使用tensorflow使用的程序操作, 'crop_and_resize', 首先使用一个标准化的提案,
+    来剪裁, 然后应用一个扩展来放缩到想要的大小
 
     Since there isn't a std support implemenation of RoIPooling, we apply the
     easier but still proven alternatve way.
+    这里使用的并不是标准的感兴趣区域汇聚的实现, 使用了第二个方式
     """
     def __init__(self, config, debug=False, name='roi_pooling'):
         super(ROIPoolingLayer, self).__init__(name=name)
-        self._pooling_mode = config.pooling_mode.lower()
+        self._pooling_mode = config.pooling_mode.lower() # crop
         self._pooled_width = config.pooled_width
         self._pooled_height = config.pooled_height
         self._pooled_padding = config.padding
@@ -38,6 +45,7 @@ class ROIPoolingLayer(snt.AbstractModule):
         """
         Gets normalized coordinates for RoIs (between 0 and 1 for cropping)
         in TensorFlow's order (y1, x1, y2, x2).
+        获得标准化后的感兴趣区域(0~1之间), 也就是坐标除以对应的宽高
 
         Args:
             roi_proposals: A Tensor with the bounding boxes of shape
@@ -48,25 +56,37 @@ class ROIPoolingLayer(snt.AbstractModule):
         Returns:
             bboxes: A Tensor with normalized bounding boxes in TensorFlow's
                 format order. Its should is (total_proposals, 4).
+                返回标准化后的边界框, 坐标顺序遵循tf的标准
         """
         with tf.name_scope('get_bboxes'):
+            # 转化类型
             im_shape = tf.cast(im_shape, tf.float32)
 
+            # 解包操作
             x1, y1, x2, y2 = tf.unstack(
                 roi_proposals, axis=1
             )
 
+            # 归一化坐标值
             x1 = x1 / im_shape[1]
             y1 = y1 / im_shape[0]
             x2 = x2 / im_shape[1]
             y2 = y2 / im_shape[0]
 
+            # 打包
             bboxes = tf.stack([y1, x1, y2, x2], axis=1)
 
             return bboxes
 
     def _roi_crop(self, roi_proposals, conv_feature_map, im_shape):
-        # Get normalized bounding boxes.
+        """
+        RoI区域剪裁
+        :param roi_proposals: 区域提案
+        :param conv_feature_map: 卷积层特征图
+        :param im_shape: 图像大小
+        :return:
+        """
+        # Get normalized bounding boxes. (total_num_proposal, 4)
         bboxes = self._get_bboxes(roi_proposals, im_shape)
         # Generate fake batch ids
         bboxes_shape = tf.shape(bboxes)

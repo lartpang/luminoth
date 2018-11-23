@@ -7,6 +7,8 @@ import tensorflow as tf
 def bbox_overlap_tf(bboxes1, bboxes2):
     """Calculate Intersection over Union (IoU) between two sets of bounding
     boxes.
+    计算两个边界框的集合的IoU
+    GPU版本
 
     Args:
         bboxes1: shape (total_bboxes1, 4)
@@ -21,7 +23,7 @@ def bbox_overlap_tf(bboxes1, bboxes2):
     Returns:
         Tensor with shape (total_bboxes1, total_bboxes2)
         with the IoU (intersection over union) of bboxes1[i] and bboxes2[j]
-        in [i, j].
+        in [i, j]. 返回值表示的[i, j]表示输入i与输入j的IoU
     """
     with tf.name_scope('bbox_overlap'):
         x11, y11, x12, y12 = tf.split(bboxes1, 4, axis=1)
@@ -50,6 +52,8 @@ def bbox_overlap_tf(bboxes1, bboxes2):
 
 def bbox_overlap(bboxes1, bboxes2):
     """Calculate Intersection of Union between two sets of bounding boxes.
+    计算IoU
+    CPU版本
 
     Intersection over Union (IoU) of two bounding boxes A and B is calculated
     doing: (A ∩ B) / (A ∪ B).
