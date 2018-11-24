@@ -84,7 +84,7 @@ class ROIPoolingLayer(snt.AbstractModule):
         :param roi_proposals: 区域提案
         :param conv_feature_map: 卷积层特征图
         :param im_shape: 图像大小
-        :return:
+        :return: 对特征图上的各个感兴趣区域池化处理后的7x7的输出
         """
         # Get normalized bounding boxes. (total_num_proposal, 4)
         bboxes = self._get_bboxes(roi_proposals, im_shape)
@@ -92,6 +92,11 @@ class ROIPoolingLayer(snt.AbstractModule):
         bboxes_shape = tf.shape(bboxes)
         batch_ids = tf.zeros((bboxes_shape[0], ), dtype=tf.int32)
         # Apply crop and resize with extracting a crop double the desired size.
+        # 该函数的意思是conv_feature_map中根据bboxes[i]来剪裁提取对应的第batch_ids[i]图
+        # 像的对应的位置内容, 利用双线性插值或者最邻近插值来进行调整剪裁的大小到
+        # [self._pooled_width * 2, self._pooled_height * 2]
+        # 这里的batch_ids描述了框与batch中图像的对应关系, 不过这里的值是全0的, 看来对应的
+        # 是只处理一个图像, 这里放缩到了14x14的输出
         crops = tf.image.crop_and_resize(
             conv_feature_map, bboxes, batch_ids,
             [self._pooled_width * 2, self._pooled_height * 2], name="crops"
@@ -99,6 +104,8 @@ class ROIPoolingLayer(snt.AbstractModule):
 
         # Applies max pool with [2,2] kernel to reduce the crops to half the
         # size, and thus having the desired output.
+        # 使用2x2大小的核, 在HW的维度上进行步长为2的最大池化
+        # 数据格式为NHWC
         prediction_dict = {
             'roi_pool': tf.nn.max_pool(
                 crops, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
@@ -115,6 +122,13 @@ class ROIPoolingLayer(snt.AbstractModule):
         return prediction_dict
 
     def _roi_pooling(self, roi_proposals, conv_feature_map, im_shape):
+        """
+        这里没有实现, 使用roi_crop处理池化操作
+        :param roi_proposals:
+        :param conv_feature_map:
+        :param im_shape:
+        :return:
+        """
         raise NotImplementedError()
 
     def _build(self, roi_proposals, conv_feature_map, im_shape):
