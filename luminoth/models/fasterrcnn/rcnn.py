@@ -302,22 +302,31 @@ class RCNN(snt.AbstractModule):
                     cls_score: shape (num_proposals, num_classes + 1)
                         Has the class scoring for each the proposals. Classes
                         are 1-indexed with 0 being the background.
+                        针对各个类别(包含背景), 各个提案区域对应的得分
 
                     cls_prob: shape (num_proposals, num_classes + 1)
                         Application of softmax on cls_score.
+                        针对各个类别(包含背景), 各个提案区域对应的概率, 也就是cls_score
+                        的softmax结果
 
                     bbox_offsets: shape (num_proposals, num_classes * 4)
                         Has the offset for each proposal for each class.
                         We have to compare only the proposals labeled with the
                         offsets for that label.
+                        针对各个类别(不包含背景), 各个提案区域对应的坐标偏移量(4个值)
+                        只需要比较标定的提案和那个标签的偏移量
 
                 target:
+                    todo: 该代码中使用的target指的是什么?
+                    fixme: 对于类别而言, 就是各个提案对应的正确的类别标签;
+                           对于边界框而言, 各个提案对于真实标签的真实偏移量
                     cls_target: shape (num_proposals,)
                         Has the correct label for each of the proposals.
                         0 => background
                         1..n => 1-indexed classes
 
                     bbox_offsets_target: shape (num_proposals, 4)
+                        ground truth相对anchor的偏移量和缩放量
                         Has the true offset of each proposal for the true
                         label.
                         In case of not having a true label (non-background)
@@ -342,14 +351,18 @@ class RCNN(snt.AbstractModule):
             # First we need to calculate the log loss betweetn cls_prob and
             # cls_target
 
+            # 只计算有效类别的损失
             # We only care for the targets that are >= 0
+            # 寻找有效提案的索引
             not_ignored = tf.reshape(tf.greater_equal(
                 cls_target, 0), [-1], name='not_ignored')
             # We apply boolean mask to score, prob and target.
+            # 确定有效提案的类别得分
             cls_score_labeled = tf.boolean_mask(
                 cls_score, not_ignored, name='cls_score_labeled')
             # cls_prob_labeled = tf.boolean_mask(
             #    cls_prob, not_ignored, name='cls_prob_labeled')
+            # 确定有效提案的样本类别
             cls_target_labeled = tf.boolean_mask(
                 cls_target, not_ignored, name='cls_target_labeled')
 
@@ -358,6 +371,7 @@ class RCNN(snt.AbstractModule):
                 tf.shape(cls_score_labeled)[0], ['rcnn']
             )
 
+            # 类别情况转化为one-hot编码
             # Transform to one-hot vector
             cls_target_one_hot = tf.one_hot(
                 cls_target_labeled, depth=self._num_classes + 1,
@@ -365,6 +379,9 @@ class RCNN(snt.AbstractModule):
             )
 
             # We get cross entropy loss of each proposal.
+            # 计算有效提案的类别标定和类别得分之间的交叉熵
+            # 这里计算的时候一个表述的是样本分类的概率, 一个表述的是样本的标定值, 相当于只在
+            # 正样本(1)的时候计算对数损失, 负样本(0)的时候不计算
             cross_entropy_per_proposal = (
                 tf.nn.softmax_cross_entropy_with_logits_v2(
                     labels=tf.stop_gradient(cls_target_one_hot),
@@ -384,12 +401,15 @@ class RCNN(snt.AbstractModule):
 
             # Second we need to calculate the smooth l1 loss between
             # `bbox_offsets` and `bbox_offsets_target`.
+            # 预测框相对anchor中心位置的偏移量以及宽高的缩放量t与ground truth相对anchor
+            # 的偏移量和缩放量之间的smooth L1损失
             bbox_offsets = prediction_dict['rcnn']['bbox_offsets']
             bbox_offsets_target = (
                 prediction_dict['target']['bbox_offsets']
             )
 
             # We only want the non-background labels bounding boxes.
+            # 只计算类别标定值大于0的提案对应的边界框
             not_ignored = tf.reshape(tf.greater(cls_target, 0), [-1])
             bbox_offsets_labeled = tf.boolean_mask(
                 bbox_offsets, not_ignored, name='bbox_offsets_labeled')
@@ -404,6 +424,7 @@ class RCNN(snt.AbstractModule):
             # `num_classes` + 1 classes.
             # for making `one_hot` with depth `num_classes` to work we need
             # to lower them to make them 0-index.
+            # 对于one-hot编码, 需要索引从0开始, 非背景的标签是从1开始的, 所以直接减1就可以
             cls_target_labeled = cls_target_labeled - 1
 
             cls_target_one_hot = tf.one_hot(
