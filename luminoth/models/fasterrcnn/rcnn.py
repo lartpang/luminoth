@@ -13,6 +13,7 @@ from luminoth.utils.vars import (
 
 class RCNN(snt.AbstractModule):
     """RCNN: Region-based Convolutional Neural Network.
+    这里就是RPN之后的操作, 包含了RoI Pooling操作和之后的分类回归操作
 
     Given region proposals (bounding boxes on an image) and a feature map of
     that image, RCNN adjusts the bounding boxes and classifies each region as
@@ -33,6 +34,8 @@ class RCNN(snt.AbstractModule):
     the remaining regions, use the class probability together with the
     corresponding bounding box regression offsets to generate the final object
     bounding boxes, with classes and probabilities assigned.
+    使用类概率过滤背景区域. 对于留下来的区域, 使用类概率和对应的边界框偏移结果来生成最终的目标
+    边界框, 包含类别和概率
     """
 
     def __init__(self, num_classes, config, debug=False, seed=None,
@@ -41,6 +44,7 @@ class RCNN(snt.AbstractModule):
         self._num_classes = num_classes
         # List of the fully connected layer sizes used before classifying and
         # adjusting the bounding box.
+        # 配置层的通道数, 例如这里是[4096, 4096], 代表两层通道数为4096的全连接层
         self._layer_sizes = config.layer_sizes
         self._activation = get_activation_function(config.activation_function)
         self._dropout_keep_prob = config.dropout_keep_prob
@@ -68,8 +72,14 @@ class RCNN(snt.AbstractModule):
         self._seed = seed
 
     def _instantiate_layers(self):
+        """
+        定义两个全连接层和后面的分类回归层
+        :return: 无
+        """
+
         # We define layers as an array since they are simple fully connected
         # ones and it should be easy to tune it from the network config.
+        # 定义两个全连接层, layer_size表示输出通道数
         self._layers = [
             snt.Linear(
                 layer_size,
@@ -82,6 +92,7 @@ class RCNN(snt.AbstractModule):
         # We define the classifier layer having a num_classes + 1 background
         # since we want to be able to predict if the proposal is background as
         # well.
+        # 定义一个分类的全连接层(21类)
         self._classifier_layer = snt.Linear(
             self._num_classes + 1, name='fc_classifier',
             initializers={'w': self._cls_initializer},
@@ -91,6 +102,7 @@ class RCNN(snt.AbstractModule):
         # The bounding box adjustment layer has 4 times the number of classes
         # We choose which to use depending on the output of the classifier
         # layer
+        # 输出通道数为类别数目x4, 也就是4x20, 每个类别对应4个值, 这个是独立于分类器的输出
         self._bbox_layer = snt.Linear(
             self._num_classes * 4, name='fc_bbox',
             initializers={'w': self._bbox_initializer},
@@ -99,15 +111,19 @@ class RCNN(snt.AbstractModule):
 
         # ROIPoolingLayer is used to extract the feature from the feature map
         # using the proposals.
+        # self._config.roi表示的就是选择crop, 7x7, valid的池化配置
         self._roi_pool = ROIPoolingLayer(self._config.roi, debug=self._debug)
         # RCNNTarget is used to define a minibatch and the correct values for
         # each of the proposals.
+        # 用来定义minibatch和提案的正确值
+        # todo: 这里有待阅读
         self._rcnn_target = RCNNTarget(
             self._num_classes, self._config.target, variances=self._variances,
             seed=self._seed
         )
         # RCNNProposal generates the final bounding boxes and tries to remove
         # duplicates.
+        # todo: 有待阅读, 不过感觉和RPNProposal函数的功能有些类似, 主要是NMS/移除重复
         self._rcnn_proposal = RCNNProposal(
             self._num_classes, self._config.proposals,
             variances=self._variances
@@ -117,16 +133,17 @@ class RCNN(snt.AbstractModule):
                gt_boxes=None, is_training=False):
         """
         Classifies & refines proposals based on the pooled feature map.
-
         基于得出的池化特征图来进行分类优化提案
 
         Args:
             conv_feature_map: The feature map of the image, extracted
                 using the pretrained network.
                 Shape: (num_proposals, pool_height, pool_width, 512).
+                卷积输出的特征图, 若是使用VGG, 对应的是14x14x512
             proposals: A Tensor with the bounding boxes proposed by the RPN.
                 Shape: (total_num_proposals, 4).
                 Encoding: (x1, y1, x2, y2).
+                RPN得出的边界框
             im_shape: A Tensor with the shape of the image in the form of
                 (image_height, image_width).
             gt_boxes (optional): A Tensor with the ground truth boxes of the
@@ -153,19 +170,27 @@ class RCNN(snt.AbstractModule):
 
         # 真实数据存在
         if gt_boxes is not None:
+            # 获得提案目标值, 和边界框偏移量
+            # todo: rcnn_target的代码需要阅读
             proposals_target, bbox_offsets_target = self._rcnn_target(
                 proposals, gt_boxes)
 
             if is_training:
                 with tf.name_scope('prepare_batch'):
                     # We flatten to set shape, but it is already a flat Tensor.
+                    # 返回提案目标值为大于等于0的提案的对应为真的逻辑张量, 表示对应的类别
+                    # 每个提案只对应一个类别
                     in_batch_proposals = tf.reshape(
                         tf.greater_equal(proposals_target, 0), [-1]
                     )
+                    # 获取有效的提案
                     proposals = tf.boolean_mask(
                         proposals, in_batch_proposals)
+                    # 获取有效的边界框对应的真实值相对的偏移量和缩放
+                    # todo: 需要从代码中查证
                     bbox_offsets_target = tf.boolean_mask(
                         bbox_offsets_target, in_batch_proposals)
+                    # 获取有效的提案对应的类别标定值
                     proposals_target = tf.boolean_mask(
                         proposals_target, in_batch_proposals)
 
@@ -174,6 +199,7 @@ class RCNN(snt.AbstractModule):
                 'bbox_offsets': bbox_offsets_target,
             }
 
+        # 在特征图上利用proposals实现RoI Pooling操作
         roi_prediction = self._roi_pool(proposals, conv_feature_map, im_shape)
 
         if self._debug:
@@ -185,6 +211,7 @@ class RCNN(snt.AbstractModule):
             pooled_features, is_training=is_training
         )
 
+        # 在最后一层全连接之前, 这里主要针对HW维度, 进行全局平均池化
         if self._use_mean:
             # We avg our height and width dimensions for a more
             # "memory-friendly" Tensor.
@@ -192,9 +219,11 @@ class RCNN(snt.AbstractModule):
 
         # We treat num proposals as batch number so that when flattening we
         # get a (num_proposals, flatten_pooled_feature_map_size) Tensor.
+        # flatten会保留batch数, 得出的是一个二维张量
         flatten_features = tf.contrib.layers.flatten(features)
         net = tf.identity(flatten_features)
 
+        # 训练的时候, RoI Pooling之后要用dropout
         if is_training:
             net = tf.nn.dropout(net, keep_prob=self._dropout_keep_prob)
 
@@ -204,6 +233,7 @@ class RCNN(snt.AbstractModule):
         # After flattening we are left with a Tensor of shape
         # (num_proposals, pool_height * pool_width * 512).
         # The first dimension works as batch size when applied to snt.Linear.
+        # 开始构建总体的RCNN网络层
         for i, layer in enumerate(self._layers):
             # Through FC layer.
             net = layer(net)
@@ -212,6 +242,7 @@ class RCNN(snt.AbstractModule):
             variable_summaries(
                 net, 'fc_{}_preactivationout'.format(i), 'reduced'
             )
+            # 使用的relu6:  min(max(features, 0), 6)
             net = self._activation(net)
             if self._debug:
                 prediction_dict['_debug']['layer_{}_out'.format(i)] = net
@@ -220,8 +251,10 @@ class RCNN(snt.AbstractModule):
             if is_training:
                 net = tf.nn.dropout(net, keep_prob=self._dropout_keep_prob)
 
+        # 创建softmax分类分支
         cls_score = self._classifier_layer(net)
         cls_prob = tf.nn.softmax(cls_score, axis=1)
+        # 创建框回归分支
         bbox_offsets = self._bbox_layer(net)
 
         prediction_dict['rcnn'] = {
@@ -232,6 +265,8 @@ class RCNN(snt.AbstractModule):
 
         # Get final objects proposals based on the probabilty, the offsets and
         # the original proposals.
+        # 得到最终的预测结果, 基于概率, 偏移量, 和原始提案
+        # todo: rcnn_proposal
         proposals_pred = self._rcnn_proposal(
             proposals, bbox_offsets, cls_prob, im_shape)
 
@@ -258,6 +293,8 @@ class RCNN(snt.AbstractModule):
     def loss(self, prediction_dict):
         """
         Returns cost for RCNN based on:
+        返回类别损失和回归损失, 基于cls_score, cls_prob, bbox_offsets, cls_target,
+        bbox_offsets_target,
 
         Args:
             prediction_dict with keys:

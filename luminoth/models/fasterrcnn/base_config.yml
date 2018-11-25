@@ -173,6 +173,7 @@ model:
     stride: 16
 
   rpn:
+    # min(max(features, 0), 6)
     activation_function: relu6
     l2_regularization_scale: 0.0005  # Disable using 0.
     # Sigma for the smooth L1 regression loss.

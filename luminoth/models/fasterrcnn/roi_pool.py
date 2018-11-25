@@ -81,9 +81,11 @@ class ROIPoolingLayer(snt.AbstractModule):
     def _roi_crop(self, roi_proposals, conv_feature_map, im_shape):
         """
         RoI区域剪裁
-        :param roi_proposals: 区域提案
+        :param roi_proposals: 对应于原始图像的区域提案
         :param conv_feature_map: 卷积层特征图
-        :param im_shape: 图像大小
+        :param im_shape: 图像大小, 用来将原始图像的区域提案进行缩放, 这里村子这一个固定的
+            比例关系, 原图上的RoI与原图的比例, 和特征图上的RoI与特征图的比例是一致的, 所以
+            这里进行了放缩, 得到了这个比例, 进而直接用在特征图上就可以实现对应的区域的剪裁
         :return: 对特征图上的各个感兴趣区域池化处理后的7x7的输出
         """
         # Get normalized bounding boxes. (total_num_proposal, 4)

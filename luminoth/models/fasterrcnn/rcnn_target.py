@@ -58,10 +58,12 @@ class RCNNTarget(snt.AbstractModule):
                 between 0 and num_classes, with 0 being background), or -1 when
                 the proposal is to be ignored in the minibatch.
                 The shape of the Tensor is (num_proposals, 1).
+                对于每个提案, 返回的是0~类别数目之间的值, -1表示忽略的提案
             bbox_targets: A bounding box regression target for each of the
                 proposals that have and greater than zero label. For every
                 other proposal we return zeros.
                 The shape of the Tensor is (num_proposals, 4).
+                返回每个有着大于等于0标签的提案的边界框回归目标, 其他的返回0.
         """
         overlaps = bbox_overlap_tf(proposals, gt_boxes[:, :4])
         # overlaps now contains (num_proposals, num_gt_boxes) with the IoU of
