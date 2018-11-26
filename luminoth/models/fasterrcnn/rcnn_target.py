@@ -1,8 +1,7 @@
-import tensorflow as tf
 import sonnet as snt
-
-from luminoth.utils.bbox_transform_tf import encode
+import tensorflow as tf
 from luminoth.utils.bbox_overlap import bbox_overlap_tf
+from luminoth.utils.bbox_transform_tf import encode
 
 
 class RCNNTarget(snt.AbstractModule):
@@ -28,7 +27,12 @@ class RCNNTarget(snt.AbstractModule):
     which ones are completely ignored.
     minibatch的大小决定了有多少目标将要被生成和忽略, RCNNTarget主要用来选择哪个提案和对应的
     目标包含在minibatch或者被忽略
+
+    这个类的返回值, 可以看_build来了解, 主要是(num_proposals, 1)的proposals_label, 以及
+    (num_proposals, 4)的bbox_targets, 前者是表述平衡过后的提案中各个提案的类别标定(0~20)
+    , 后者则表述留下来的提案中的前景提案所对应的最接近的真实框的偏移量和缩放量
     """
+
     def __init__(self, num_classes, config, seed=None, variances=None,
                  name='rcnn_proposal'):
         """
@@ -66,11 +70,14 @@ class RCNNTarget(snt.AbstractModule):
                 the proposal is to be ignored in the minibatch.
                 The shape of the Tensor is (num_proposals, 1).
                 对于每个提案, 返回的是0~类别数目之间的值, 表示对应的类别, -1表示忽略的提案
+                对于这个结果, 实际上已经考虑了minibatch的内部的而正负样本之间的平衡的问题
             bbox_targets: A bounding box regression target for each of the
                 proposals that have and greater than zero label. For every
                 other proposal we return zeros.
                 The shape of the Tensor is (num_proposals, 4).
-                返回每个有着大于等于0标签的提案的边界框回归目标, 其他的返回0.
+                返回每个有着大于0标签的提案的边界框回归目标, 其他的返回0.
+                在前景提案的位置上更新与自身最好的真实框与前景提案之间的偏移量和缩放连量(4个
+                值), 其余为0
         """
         # 计算IoU (num_proposals, num_gt_boxes)
         overlaps = bbox_overlap_tf(proposals, gt_boxes[:, :4])
@@ -239,6 +246,7 @@ class RCNNTarget(snt.AbstractModule):
                 x=tf.negative(proposals_label),
                 y=proposals_label
             )
+
         # Disable some fgs if we have too many foregrounds.
         proposals_label = tf.cond(
             tf.greater(tf.shape(fg_inds)[0], max_fg),
@@ -290,6 +298,7 @@ class RCNNTarget(snt.AbstractModule):
                 ),
                 y=proposals_label
             )
+
         proposals_label = tf.cond(
             tf.greater_equal(tf.shape(bg_inds)[0], max_bg),
             true_fn=disable_some_bgs,
@@ -300,30 +309,43 @@ class RCNNTarget(snt.AbstractModule):
         # based on the values of the ground-truth boxes.
         # We have to use only the proposals labeled >= 1, each matching with
         # the proper gt_boxes
+        # 接下来基于真实边界框, 对于标定的预测边界框计算更为合适的target
+        # 只需要计算标定值大于等于1(非背景, 未被忽略的提案), 每一个都匹配一个更为合适的真实框
 
         # Get the ids of the proposals that matter for bbox_target comparisson.
+        # 获得前景提案的逻辑索引
         is_proposal_with_target = tf.greater(
             proposals_label, 0
         )
+        # 获得前景提案的坐标索引
         proposals_with_target_idx = tf.where(
             condition=is_proposal_with_target
         )
+
         # Get the corresponding ground truth box only for the proposals with
         # target.
+        # 根据前面得到前景提案的索引, 从对于每个提案而言最好的真实框索引中索引数据
+        # overlaps_best_gt_idxs (num_proposals, )
         gt_boxes_idxs = tf.gather(
             overlaps_best_gt_idxs,
             proposals_with_target_idx
         )
         # Get the values of the ground truth boxes.
+        # 根据索引获得对于每个前景提案而言最好的真实框的数据
+        # gather_nd支持对多维的索引
         proposals_gt_boxes = tf.gather_nd(
             gt_boxes[:, :4], gt_boxes_idxs
         )
+        # 这里相当于就是索引前景提案
         # We create the same array but with the proposals
+        # proposal (num_proposals, 4), 这样的索引才可以真正保留原坐标的格式
         proposals_with_target = tf.gather_nd(
             proposals,
             proposals_with_target_idx
         )
         # We create our targets with bbox_transform.
+        # 计算proposals_gt_boxes与proposals_with_target的相对的偏移量和缩放量
+        # 也就是计算对于每个前景提案而言最好的真实框与前景提案之间的偏移量和缩放连量
         bbox_targets_nonzero = encode(
             proposals_with_target,
             proposals_gt_boxes,
@@ -332,6 +354,9 @@ class RCNNTarget(snt.AbstractModule):
 
         # We unmap targets to proposal_labels (containing the length of
         # proposals)
+        # 使用indices在zeros(update)的矩阵上对应的位置更新数据update
+        # 这里的结果就是将前景提案的对应位置上, 更新与自身最好的真实框与前景提案之间的偏移量和
+        # 缩放连量
         bbox_targets = tf.scatter_nd(
             indices=proposals_with_target_idx,
             updates=bbox_targets_nonzero,
