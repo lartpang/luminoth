@@ -280,6 +280,9 @@ class FasterRCNN(snt.AbstractModule):
         with tf.variable_scope('generate_anchors'):
             grid_width = feature_map_shape[2]  # width
             grid_height = feature_map_shape[1]  # height
+
+            # 这里计算的是各个特征图上的点所对应的原图上的坐标, 注意, 这里是因为从0开始, 所
+            # 以直接乘以缩放因子可以得到对应原图上的坐标
             shift_x = tf.range(grid_width) * self._anchor_stride
             shift_y = tf.range(grid_height) * self._anchor_stride
             shift_x, shift_y = tf.meshgrid(shift_x, shift_y)
