@@ -186,11 +186,10 @@ class RCNN(snt.AbstractModule):
                     # 获取有效的提案
                     proposals = tf.boolean_mask(
                         proposals, in_batch_proposals)
-                    # 获取有效的边界框对应的真实值相对的偏移量和缩放
-                    # todo: 需要从代码中查证
+                    # 获取有效的边界框对应的真实值相对anchor的偏移量和缩放
                     bbox_offsets_target = tf.boolean_mask(
                         bbox_offsets_target, in_batch_proposals)
-                    # 获取有效的提案对应的类别标定值
+                    # 获取有效的提案对应的真实类别标定值
                     proposals_target = tf.boolean_mask(
                         proposals_target, in_batch_proposals)
 
@@ -298,7 +297,7 @@ class RCNN(snt.AbstractModule):
 
         Args:
             prediction_dict with keys:
-                rcnn:
+                rcnn: 研究的是预测结果
                     cls_score: shape (num_proposals, num_classes + 1)
                         Has the class scoring for each the proposals. Classes
                         are 1-indexed with 0 being the background.
@@ -316,10 +315,9 @@ class RCNN(snt.AbstractModule):
                         针对各个类别(不包含背景), 各个提案区域对应的坐标偏移量(4个值)
                         只需要比较标定的提案和那个标签的偏移量
 
-                target:
-                    todo: 该代码中使用的target指的是什么?
-                    fixme: 对于类别而言, 就是各个提案对应的正确的类别标签;
-                           对于边界框而言, 各个提案对于真实标签的真实偏移量
+                target: 研究的是真实标签
+                    对于类别而言, 就是各个提案对应的正确的类别标签;
+                    对于边界框而言, 各个提案对于真实标签的真实偏移量
                     cls_target: shape (num_proposals,)
                         Has the correct label for each of the proposals.
                         0 => background
@@ -341,28 +339,29 @@ class RCNN(snt.AbstractModule):
 
         """
         with tf.name_scope('RCNNLoss'):
+            # 预测得分
+            # (num_proposals, num_classes + 1)
             cls_score = prediction_dict['rcnn']['cls_score']
-            # cls_prob = prediction_dict['rcnn']['cls_prob']
             # Cast target explicitly as int32.
+            # 真实类别
+            # (num_proposals, )
             cls_target = tf.cast(
                 prediction_dict['target']['cls'], tf.int32
             )
 
             # First we need to calculate the log loss betweetn cls_prob and
-            # cls_target
+            # cls_target, 需要计算分类概率的对数损失
 
-            # 只计算有效类别的损失
+            # 只计算正样本的损失
             # We only care for the targets that are >= 0
-            # 寻找有效提案的索引
+            # 寻找要保留, 不忽略的样本, 作为有效的样本
             not_ignored = tf.reshape(tf.greater_equal(
                 cls_target, 0), [-1], name='not_ignored')
             # We apply boolean mask to score, prob and target.
-            # 确定有效提案的类别得分
+            # 确定有效样本的类别预测得分
             cls_score_labeled = tf.boolean_mask(
                 cls_score, not_ignored, name='cls_score_labeled')
-            # cls_prob_labeled = tf.boolean_mask(
-            #    cls_prob, not_ignored, name='cls_prob_labeled')
-            # 确定有效提案的样本类别
+            # 确定有效样本的真实类别
             cls_target_labeled = tf.boolean_mask(
                 cls_target, not_ignored, name='cls_target_labeled')
 
@@ -371,7 +370,8 @@ class RCNN(snt.AbstractModule):
                 tf.shape(cls_score_labeled)[0], ['rcnn']
             )
 
-            # 类别情况转化为one-hot编码
+            # 将真实的类别转化为one-hot编码, 现在的cls_target_one_hot转化为
+            # (num_proposal, 21)
             # Transform to one-hot vector
             cls_target_one_hot = tf.one_hot(
                 cls_target_labeled, depth=self._num_classes + 1,
@@ -379,9 +379,9 @@ class RCNN(snt.AbstractModule):
             )
 
             # We get cross entropy loss of each proposal.
-            # 计算有效提案的类别标定和类别得分之间的交叉熵
-            # 这里计算的时候一个表述的是样本分类的概率, 一个表述的是样本的标定值, 相当于只在
-            # 正样本(1)的时候计算对数损失, 负样本(0)的时候不计算
+            # 计算有效提案的真实类别和类别预测得分之间的交叉熵
+            # 这里计算的时候一个表述的是样本分类的概率, 一个表述的是样本的真实类, 相当于只在
+            # 对应的真实类别上进行了计算
             cross_entropy_per_proposal = (
                 tf.nn.softmax_cross_entropy_with_logits_v2(
                     labels=tf.stop_gradient(cls_target_one_hot),
@@ -403,16 +403,21 @@ class RCNN(snt.AbstractModule):
             # `bbox_offsets` and `bbox_offsets_target`.
             # 预测框相对anchor中心位置的偏移量以及宽高的缩放量t与ground truth相对anchor
             # 的偏移量和缩放量之间的smooth L1损失
+            #  (num_proposals, num_classes * 4)
             bbox_offsets = prediction_dict['rcnn']['bbox_offsets']
+            # (num_proposals, 4)
             bbox_offsets_target = (
                 prediction_dict['target']['bbox_offsets']
             )
 
             # We only want the non-background labels bounding boxes.
-            # 只计算类别标定值大于0的提案对应的边界框
+            # 只计算类别标定值大于0的提案对应的边界框, 回归这边只计算非背景的有效框
+            # (num_proposals, )
             not_ignored = tf.reshape(tf.greater(cls_target, 0), [-1])
+            # (num_proposals, num_classes * 4)
             bbox_offsets_labeled = tf.boolean_mask(
                 bbox_offsets, not_ignored, name='bbox_offsets_labeled')
+            # (num_proposals, 4)
             bbox_offsets_target_labeled = tf.boolean_mask(
                 bbox_offsets_target, not_ignored,
                 name='bbox_offsets_target_labeled'
@@ -426,27 +431,35 @@ class RCNN(snt.AbstractModule):
             # to lower them to make them 0-index.
             # 对于one-hot编码, 需要索引从0开始, 非背景的标签是从1开始的, 所以直接减1就可以
             cls_target_labeled = cls_target_labeled - 1
-
             cls_target_one_hot = tf.one_hot(
                 cls_target_labeled, depth=self._num_classes,
                 name='cls_target_one_hot'
             )
+            # 进行one-hot编码后, 数据的格式发生了改变
+            # cls_target now is (num_proposals, num_classes)
 
-            # cls_target now is (num_labeled, num_classes)
+            # (num_proposals x num_classes, 4)
             bbox_flatten = tf.reshape(
                 bbox_offsets_labeled, [-1, 4], name='bbox_flatten')
 
             # We use the flatten cls_target_one_hot as boolean mask for the
             # bboxes.
+            # 将cls_target_one_hot转化为一维的张量, 作为bboxes的掩膜来进行操作
+            # 现在的cls_target_one_hot形状为(num_porposals, num_classes),
+            # 也就是(n, 20), 进行reshape操作后应该是(n x 20, )
             cls_flatten = tf.cast(tf.reshape(
                 cls_target_one_hot, [-1]), tf.bool, 'cls_flatten_as_bool')
 
+            # bbox_flatten本身就是nx4的大小, 被一个一维的掩膜进行处理,
+            # 这里确定了每个提案所对应的真实类别下的框的预测偏移量
             bbox_offset_cleaned = tf.boolean_mask(
                 bbox_flatten, cls_flatten, 'bbox_offset_cleaned')
 
             # Calculate the smooth l1 loss between the "cleaned" bboxes
             # offsets (that means, the useful results) and the labeled
             # targets.
+            # 计算预测框相对anchor中心位置的偏移量以及宽高的缩放量与ground truth相对
+            # anchor的偏移量和缩放量的之间的smoothL1损失
             reg_loss_per_proposal = smooth_l1_loss(
                 bbox_offset_cleaned, bbox_offsets_target_labeled,
                 sigma=self._l1_sigma
@@ -466,6 +479,7 @@ class RCNN(snt.AbstractModule):
                     reg_loss_per_proposal
                 )
 
+            # reduce_* 系列函数, axis=None 表示最终的结果只有一个值
             return {
                 'rcnn_cls_loss': tf.reduce_mean(cross_entropy_per_proposal),
                 'rcnn_reg_loss': tf.reduce_mean(reg_loss_per_proposal),
