@@ -128,7 +128,6 @@ class FasterRCNN(snt.AbstractModule):
 
         # Generate anchors for the image based on the anchor reference.
         # 基于特征图生成anchors
-        # todo: 需要阅读如何生成的
         all_anchors = self._generate_anchors(tf.shape(conv_feature_map))
         rpn_prediction = self._rpn(
             conv_feature_map, image_shape, all_anchors,
@@ -267,7 +266,7 @@ class FasterRCNN(snt.AbstractModule):
 
     def _generate_anchors(self, feature_map_shape):
         """Generate anchor for an image.
-        生成以所有特征图点为中心在原图上对应的的anchors具体坐标结果
+
 
         Using the feature map, the output of the pretrained network for an
         image, and the anchor_reference generated using the anchor config

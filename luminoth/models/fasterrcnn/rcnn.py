@@ -116,14 +116,12 @@ class RCNN(snt.AbstractModule):
         # RCNNTarget is used to define a minibatch and the correct values for
         # each of the proposals.
         # 用来定义minibatch和提案的正确值
-        # todo: 这里有待阅读
         self._rcnn_target = RCNNTarget(
             self._num_classes, self._config.target, variances=self._variances,
             seed=self._seed
         )
         # RCNNProposal generates the final bounding boxes and tries to remove
         # duplicates.
-        # todo: 有待阅读, 不过感觉和RPNProposal函数的功能有些类似, 主要是NMS/移除重复
         self._rcnn_proposal = RCNNProposal(
             self._num_classes, self._config.proposals,
             variances=self._variances
@@ -171,7 +169,6 @@ class RCNN(snt.AbstractModule):
         # 真实数据存在
         if gt_boxes is not None:
             # 获得提案目标值, 和边界框偏移量
-            # todo: rcnn_target的代码需要阅读
             proposals_target, bbox_offsets_target = self._rcnn_target(
                 proposals, gt_boxes)
 
@@ -265,7 +262,6 @@ class RCNN(snt.AbstractModule):
         # Get final objects proposals based on the probabilty, the offsets and
         # the original proposals.
         # 得到最终的预测结果, 基于概率, 偏移量, 和原始提案
-        # todo: rcnn_proposal
         proposals_pred = self._rcnn_proposal(
             proposals, bbox_offsets, cls_prob, im_shape)
 

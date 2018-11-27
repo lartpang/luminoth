@@ -4,7 +4,8 @@ from luminoth.utils.bbox_transform_tf import change_order, clip_boxes, decode
 
 
 class RCNNProposal(snt.AbstractModule):
-    """Create final object detection proposals.
+    """
+    Create final object detection proposals.
     获得所有框的所有类别的预测结果, 经过边界裁剪, 坐标合理性限定, 预测概率限定, NMS处理后的结
     果的概率中, 前k个最大的预测结果: 概率, 原始坐标, 类别标签
 
