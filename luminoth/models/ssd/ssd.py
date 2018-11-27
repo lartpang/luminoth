@@ -1,21 +1,19 @@
 import numpy as np
 import sonnet as snt
 import tensorflow as tf
-
 from sonnet.python.modules.conv import Conv2D
 
 from luminoth.models.ssd.feature_extractor import SSDFeatureExtractor
 from luminoth.models.ssd.proposal import SSDProposal
 from luminoth.models.ssd.target import SSDTarget
-from luminoth.models.ssd.utils import (
-    generate_raw_anchors, adjust_bboxes
-)
-from luminoth.utils.losses import smooth_l1_loss
+from luminoth.models.ssd.utils import (adjust_bboxes, generate_raw_anchors)
 from luminoth.utils.bbox_transform import clip_boxes
+from luminoth.utils.losses import smooth_l1_loss
 
 
 class SSD(snt.AbstractModule):
-    """SSD: Single Shot MultiBox Detector
+    """
+    SSD: Single Shot MultiBox Detector
     """
 
     def __init__(self, config, name='ssd'):
@@ -49,15 +47,21 @@ class SSD(snt.AbstractModule):
 
         Returns:
             A dictionary with the following keys:
-            predictions:
-            proposal_prediction: A dictionary with:
-                proposals: The proposals of the network after appling some
-                    filters like negative area; and NMS
-                proposals_label: A tensor with the label for each proposal.
-                proposals_label_prob: A tensor with the softmax probability
-                    for the label of each proposal.
-            bbox_offsets: A tensor with the predicted bbox_offsets
-            class_scores: A tensor with the predicted classes scores
+            predictions: 预测结果
+                proposal_prediction: 关于提案的信息
+                A dictionary with:
+                    proposals: The proposals of the network after appling some
+                        filters like negative area; and NMS
+                        最终保留下来的提案
+                    proposals_label: A tensor with the label for each proposal.
+                        对于每个提案的标签判定
+                    proposals_label_prob: A tensor with the softmax probability
+                        for the label of each proposal.
+                        对于每个提案的softmax概率
+                bbox_offsets: A tensor with the predicted bbox_offsets
+                    预测的边界框的偏移量
+                class_scores: A tensor with the predicted classes scores
+                    预测的类列得分/置信度
         """
         # Reshape image
         self.image_shape.append(3)  # Add channels to shape
@@ -68,18 +72,23 @@ class SSD(snt.AbstractModule):
         self.feature_extractor = SSDFeatureExtractor(
             self._config.base_network, parent_name=self.module_name
         )
+        # 获取特征图
+        # ques: 这里的特征图对应的是多个卷积层还是只是一个卷积层的输出
         feature_maps = self.feature_extractor(image, is_training=is_training)
 
         # Build a MultiBox predictor on top of each feature layer and collect
         # the bounding box offsets and the category score logits they produce
         bbox_offsets_list = []
         class_scores_list = []
+        # 对于特征图上的所有的点进行遍历, 确定对应的框
         for i, feat_map in enumerate(feature_maps.values()):
             multibox_predictor_name = 'MultiBox_{}'.format(i)
             with tf.name_scope(multibox_predictor_name):
+                # 这里的i迭代的是不同卷积层对应的输出特征图
                 num_anchors = self._anchors_per_point[i]
 
                 # Predict bbox offsets
+                # 用3x3卷积预测坐标偏移量
                 bbox_offsets_layer = Conv2D(
                     num_anchors * 4, [3, 3],
                     name=multibox_predictor_name + '_offsets_conv'
@@ -87,9 +96,11 @@ class SSD(snt.AbstractModule):
                 bbox_offsets_flattened = tf.reshape(
                     bbox_offsets_layer, [-1, 4]
                 )
+                # 获取所有的预测框的偏移量
                 bbox_offsets_list.append(bbox_offsets_flattened)
 
                 # Predict class scores
+                # 使用3x3卷积预测类别(包含背景类)
                 class_scores_layer = Conv2D(
                     num_anchors * (self._num_classes + 1), [3, 3],
                     name=multibox_predictor_name + '_classes_conv',
@@ -97,22 +108,31 @@ class SSD(snt.AbstractModule):
                 class_scores_flattened = tf.reshape(
                     class_scores_layer, [-1, self._num_classes + 1]
                 )
+                # 获取所有的预测框类别判定
                 class_scores_list.append(class_scores_flattened)
+
+        # 组合所有的边界框偏移量, 类别得分, 并计算对应的softmax概率
+        # (num_bboxes, 4)
         bbox_offsets = tf.concat(
             bbox_offsets_list, axis=0, name='concatenate_all_bbox_offsets'
         )
+        # (num_bboxes, 21) 对应得分
         class_scores = tf.concat(
             class_scores_list, axis=0, name='concatenate_all_class_scores'
         )
+        # (num_bboxes, 21) 对应概率
         class_probabilities = tf.nn.softmax(
             class_scores, axis=-1, name='class_probabilities_softmax'
         )
 
         # Generate anchors (generated only once, therefore we use numpy)
+        # 基于各个卷积层的特征图, 使用anchor参数, 生成所有的anchors
+        # todo: 阅读 generate_raw_anchor 代码
         raw_anchors_per_featmap = generate_raw_anchors(
             feature_maps, self._anchor_min_scale, self._anchor_max_scale,
             self._anchor_ratios, self._anchors_per_point
         )
+
         anchors_list = []
         for i, (feat_map_name, feat_map) in enumerate(feature_maps.items()):
             # TODO: Anchor generation should be simpler. We should create
@@ -165,9 +185,9 @@ class SSD(snt.AbstractModule):
 
             # Add target tensors to prediction dict
             prediction_dict['target'] = {
-                'cls': class_targets,
+                'cls'         : class_targets,
                 'bbox_offsets': bbox_offsets_targets,
-                'anchors': anchors
+                'anchors'     : anchors
             }
 
         # Add network's raw output to prediction dict
@@ -263,8 +283,8 @@ class SSD(snt.AbstractModule):
             final_loss = tf.cond(
                 safety_condition,
                 true_fn=lambda: (
-                    (cls_loss + bbox_loss * self._loc_loss_weight) /
-                    tf.cast(tf.shape(bbox_offsets_positives)[0], tf.float32)
+                        (cls_loss + bbox_loss * self._loc_loss_weight) /
+                        tf.cast(tf.shape(bbox_offsets_positives)[0], tf.float32)
                 ),
                 false_fn=lambda: 0.0
             )
@@ -293,8 +313,8 @@ class SSD(snt.AbstractModule):
             if return_all:
                 return {
                     'total_loss': total_loss,
-                    'cls_loss': cls_loss,
-                    'bbox_loss': bbox_loss
+                    'cls_loss'  : cls_loss,
+                    'bbox_loss' : bbox_loss
                 }
             else:
                 return total_loss

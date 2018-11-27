@@ -2,15 +2,96 @@ train:
   # Run name for the training session.
   run_name: my-run
   # Directory in which model checkpoints & summaries (for Tensorboard) will be saved.
-  job_dir: jobs/
+  job_dir: /home/lart/coding/trainforlumi/Jobs/
+  debug: True
+  batch_size: 1
+  display_every_secs: 500
+  # The frequency, in seconds, that a checkpoint is saved.
+  save_checkpoint_secs: 600
+  learning_rate:
+    # Because we're using kwargs, we want the learning_rate dict to be replaced
+    # as a whole.
+    _replace: True
+    # Learning rate decay method; can be: ((empty), 'none', piecewise_constant,
+    # exponential_decay, polynomial_decay) You can define different decay
+    # methods using `decay_method` and defining all the necessary arguments.
+    decay_method:
+    learning_rate: 0.0003
+  # Optimizer configuration.
+  optimizer:
+    # Because we're using kwargs, we want the optimizer dict to be replaced as a
+    # whole.
+    _replace: True
+    # Type of optimizer to use (momentum, adam, gradient_descent, rmsprop).
+    type: momentum
+    # Any options are passed directly to the optimizer as kwarg.
+    momentum: 0.9
+  # Number of epochs (complete dataset batches) to run.
+  num_epochs: 1000
+
+  # Image visualization mode, options = train, eval, debug, (empty).
+  # Default=(empty).
+  image_vis: train
+  # Variable summary visualization mode, options = full, reduced, (empty).
+  var_vis:
 
 dataset:
   type: object_detection
   # From which directory to read the dataset.
-  dir: datasets/voc/tf
+  dir: /home/lart/coding/trainforlumi/datasets/voc/tf
+  # Which split of tfrecords to look for.
+  split: train
+  # Resize image according to min_size and max_size.
+  image_preprocessing:
+    min_size: 600
+    max_size: 1024
+  # Data augmentation techniques.
+  data_augmentation:
+    - flip:
+        left_right: True
+        up_down: False
+        prob: 0.5
 
 model:
   type: fasterrcnn
   network:
     # Total number of classes to predict.
     num_classes: 20
+    # Use RCNN or just RPN.
+    with_rcnn: True
+
+  # Whether to use batch normalization in the model.
+  batch_norm: False
+
+  base_network:
+    # Which type of pretrained network to use.
+    architecture: resnet_v1_101
+    # Should we train the pretrained network.
+    trainable: True
+    # From which file to load the weights.
+    weights:
+    # Should we download weights if not available.
+    download: True
+    # Which endpoint layer to use as feature map for network.
+    endpoint:
+    # Starting point after which all the variables in the base network will be
+    # trainable. If not specified, then all the variables in the network will be
+    # trainable.
+    fine_tune_from: block2
+    # Whether to train the ResNet's batch norm layers.
+    train_batch_norm: False
+    # Whether to use the base network's tail in the RCNN.
+    use_tail: True
+    # Whether to freeze the base network's tail.
+    freeze_tail: False
+    # Output stride for ResNet.
+    output_stride: 16
+    arg_scope:
+      # Regularization.
+      weight_decay: 0.0005
+  loss:
+    # Loss weights for calculating the total loss.
+    rpn_cls_loss_weight: 1.0
+    rpn_reg_loss_weights: 1.0
+    rcnn_cls_loss_weight: 1.0
+    rcnn_reg_loss_weights: 1.0
