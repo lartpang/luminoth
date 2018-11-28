@@ -16,7 +16,6 @@ from luminoth.predict import predict
 from luminoth.tools import checkpoint, cloud, dataset, server
 from luminoth.train import train
 
-
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
 

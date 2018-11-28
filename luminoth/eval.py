@@ -1,9 +1,9 @@
-import click
-import json
-import numpy as np
 import os
-import tensorflow as tf
 import time
+
+import click
+import numpy as np
+import tensorflow as tf
 
 from luminoth.datasets import get_dataset
 from luminoth.models import get_model
@@ -13,13 +13,20 @@ from luminoth.utils.image_vis import image_vis_summaries
 
 
 @click.command(help='Evaluate trained (or training) models')
-@click.option('dataset_split', '--split', default='val', help='Dataset split to use.')  # noqa
-@click.option('config_files', '--config', '-c', required=True, multiple=True, help='Config to use.')  # noqa
-@click.option('--watch/--no-watch', default=True, help='Keep watching checkpoint directory for new files.')  # noqa
-@click.option('--from-global-step', type=int, default=None, help='Consider only checkpoints after this global step')  # noqa
-@click.option('override_params', '--override', '-o', multiple=True, help='Override model config params.')  # noqa
-@click.option('--files-per-class', type=int, default=10, help='How many files per class display in every epoch.')  # noqa
-@click.option('--max-detections', type=int, default=100, help='Max detections to consider.')  # noqa
+@click.option('dataset_split', '--split', default='val',
+              help='Dataset split to use.')  # noqa
+@click.option('config_files', '--config', '-c', required=True, multiple=True,
+              help='Config to use.')  # noqa
+@click.option('--watch/--no-watch', default=True,
+              help='Keep watching checkpoint directory for new files.')  # noqa
+@click.option('--from-global-step', type=int, default=None,
+              help='Consider only checkpoints after this global step')  # noqa
+@click.option('override_params', '--override', '-o', multiple=True,
+              help='Override model config params.')  # noqa
+@click.option('--files-per-class', type=int, default=10,
+              help='How many files per class display in every epoch.')  # noqa
+@click.option('--max-detections', type=int, default=100,
+              help='Max detections to consider.')  # noqa
 def eval(dataset_split, config_files, watch, from_global_step, override_params,
          files_per_class, max_detections):
     """Evaluate models using dataset."""
@@ -144,16 +151,16 @@ def eval(dataset_split, config_files, watch, from_global_step, override_params,
 
     # Aggregate the required ops to evaluate into a dict.
     ops = {
-        'init_op': init_op,
-        'metric_ops': metric_ops,
-        'pred_objects': pred_objects,
+        'init_op'             : init_op,
+        'metric_ops'          : metric_ops,
+        'pred_objects'        : pred_objects,
         'pred_objects_classes': pred_objects_classes,
-        'pred_objects_scores': pred_objects_scores,
-        'train_objects': train_objects,
-        'losses': losses,
-        'prediction_dict': prediction_dict,
-        'filename': train_filename,
-        'train_image': train_image
+        'pred_objects_scores' : pred_objects_scores,
+        'train_objects'       : train_objects,
+        'losses'              : losses,
+        'prediction_dict'     : prediction_dict,
+        'filename'            : train_filename,
+        'train_image'         : train_image
     }
 
     metrics_scope = '{}_metrics'.format(dataset_split)
@@ -302,10 +309,10 @@ def evaluate_once(config, writer, saver, ops, checkpoint,
     """
     # Output of the detector, per batch.
     output_per_batch = {
-        'bboxes': [],  # Bounding boxes detected.
-        'classes': [],  # Class associated to each bounding box.
-        'scores': [],  # Score for each detection.
-        'gt_bboxes': [],  # Ground-truth bounding boxes for the batch.
+        'bboxes'    : [],  # Bounding boxes detected.
+        'classes'   : [],  # Class associated to each bounding box.
+        'scores'    : [],  # Score for each detection.
+        'gt_bboxes' : [],  # Ground-truth bounding boxes for the batch.
         'gt_classes': [],  # Ground-truth classes for each bounding box.
     }
 
@@ -325,12 +332,12 @@ def evaluate_once(config, writer, saver, ops, checkpoint,
             while not coord.should_stop():
                 fetches = {
                     'metric_ops': ops['metric_ops'],
-                    'bboxes': ops['pred_objects'],
-                    'classes': ops['pred_objects_classes'],
-                    'scores': ops['pred_objects_scores'],
-                    'gt_bboxes': ops['train_objects'],
-                    'losses': ops['losses'],
-                    'filename': ops['filename'],
+                    'bboxes'    : ops['pred_objects'],
+                    'classes'   : ops['pred_objects_classes'],
+                    'scores'    : ops['pred_objects_scores'],
+                    'gt_bboxes' : ops['train_objects'],
+                    'losses'    : ops['losses'],
+                    'filename'  : ops['filename'],
                 }
                 if image_vis is not None:
                     fetches['prediction_dict'] = ops['prediction_dict']
@@ -388,8 +395,10 @@ def evaluate_once(config, writer, saver, ops, checkpoint,
                         '{} processed in {:.2f}s (global {:.2f} images/s, '
                         'period {:.2f} images/s)'.format(
                             total_evaluated, track_end - start_time,
-                            total_evaluated / (track_end - start_time),
-                            track_count / (track_end - track_start),
+                                             total_evaluated / (
+                                                         track_end - start_time),
+                                             track_count / (
+                                                         track_end - track_start),
                         ))
                     track_count = 0
                     track_start = track_end
@@ -631,8 +640,8 @@ def calculate_metrics(output_per_batch, num_classes):
 
             # Interpolate the precision. (Make it monotonically-increasing.)
             for i in range(len(p) - 1, 0, -1):
-                if p[i] > p[i-1]:
-                    p[i-1] = p[i]
+                if p[i] > p[i - 1]:
+                    p[i - 1] = p[i]
 
             ap = 0
             inds = np.searchsorted(r, rec_thresholds)

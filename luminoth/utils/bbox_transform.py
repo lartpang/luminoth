@@ -99,11 +99,16 @@ def decode(bboxes, deltas):
 
 
 def clip_points(points, max_val, min_val):
+    """
+    将数据约束到最大最小值之间, 超出的用最大或最小值代替
+    """
     return np.maximum(np.minimum(points, max_val), min_val)
 
 
 def clip_boxes(boxes, image_shape):
-    """Clip boxes to image boundaries.
+    """
+    Clip boxes to image boundaries.
+    将超出图像边界的框的部分剪裁, 仅保留图像内部的
 
     Args:
         boxes: A numpy array of bounding boxes.
@@ -123,7 +128,8 @@ def clip_boxes(boxes, image_shape):
 
 
 def unmap(data, count, inds, fill=0):
-    """Unmap a subset of item (data) back to the original set of items (of size
+    """
+    Unmap a subset of item (data) back to the original set of items (of size
     count)
     """
     if len(data.shape) == 1:

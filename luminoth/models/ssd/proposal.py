@@ -5,7 +5,8 @@ from luminoth.utils.bbox_transform_tf import decode, clip_boxes, change_order
 
 
 class SSDProposal(snt.AbstractModule):
-    """Transforms anchors and SSD predictions into object proposals.
+    """
+    Transforms anchors and SSD predictions into object proposals.
 
     Using the fixed anchors and the SSD predictions for both classification
     and regression (adjusting the bounding box), we return a list of proposals
