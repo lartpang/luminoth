@@ -225,6 +225,7 @@ class SSD(snt.AbstractModule):
 
         # We generate proposals when predicting, or when debug=True for
         # generating visualizations during training.
+        # 进入这里的都是调整后的预测结果, 可以认为是网络的预测候选, 后续操作主要是挑选
         if not is_training or self._debug:
             proposals_creator = SSDProposal(
                 self._num_classes, self._config.proposals,
