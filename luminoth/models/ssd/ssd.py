@@ -190,7 +190,9 @@ class SSD(snt.AbstractModule):
             #   anchors对应的类别预测得分
             #   anchors对应的类别预测概率
             #   预测出的 提案框相对于anchors的偏移缩放
-            # note: 这里对于每一个anchors都是预测一组偏移量, 是一一对应的
+            # note: 这里对于每一个anchors都是预测一组偏移量, 是一一对应的,
+            #  而且这里实际上只保留了对应与类别标签大于等于0的anchors对应的结果
+            # boolean_mask 只保留filter上为True的对应的数据
             with tf.name_scope('hard_negative_mining_filter'):
                 predictions_filter = tf.greater_equal(class_targets, 0)
                 anchors = tf.boolean_mask(anchors, predictions_filter)
@@ -269,10 +271,15 @@ class SSD(snt.AbstractModule):
                 name='cls_target_one_hot'
             )
 
+            ###################################################################
+            # 这里计算了对应的L_conf ############################################
+            ###################################################################
+
             # We get cross entropy loss of each proposal.
             # TODO: Optimization opportunity: We calculate the probabilities
             #       earlier in the program, so if we used those instead of the
             #       logits we would not have the need to do softmax here too.
+            # 得到对于每个提案的分类损失
             cross_entropy_per_proposal = (
                 tf.nn.softmax_cross_entropy_with_logits(
                     labels=cls_target_one_hot, logits=cls_pred
@@ -286,6 +293,7 @@ class SSD(snt.AbstractModule):
             bbox_offsets_targets = (prediction_dict['target']['bbox_offsets'])
 
             # We only want the non-background labels bounding boxes.
+            # 在预测框和真实框中筛选前景对应的偏移缩放值,
             not_ignored = tf.reshape(tf.greater(cls_target, 0), [-1])
             bbox_offsets_positives = tf.boolean_mask(
                 bbox_offsets, not_ignored, name='bbox_offsets_positives')
@@ -294,16 +302,23 @@ class SSD(snt.AbstractModule):
                 name='bbox_offsets_target_positives'
             )
 
+            ###################################################################
+            # 这里计算了L_{loc}(x,l,g) #########################################
+            ###################################################################
+
             # Calculate the smooth l1 regression loss between the flatten
             # bboxes offsets  and the labeled targets.
+            # 得到对于每个提案的回归损失
             reg_loss_per_proposal = smooth_l1_loss(
                 bbox_offsets_positives, bbox_offsets_target_positives)
 
+            # 前面的计算只是将对应的项进行了计算, 还需要进行求和
             cls_loss = tf.reduce_sum(cross_entropy_per_proposal)
             bbox_loss = tf.reduce_sum(reg_loss_per_proposal)
 
             # Following the paper, set loss to 0 if there are 0 bboxes
             # assigned as foreground targets.
+            # 如果真实框中, 没有前景类别, 则将损失设定为0, 存在前景类别的时候, 加权求和
             safety_condition = tf.not_equal(
                 tf.shape(bbox_offsets_positives)[0], 0
             )
