@@ -66,7 +66,7 @@ class RPN(snt.AbstractModule):
 
         self._config = config
 
-    def _instantiate_la+yers(self):
+    def _instantiate_layers(self):
         """
         Instantiates all convolutional modules used in the RPN.
         创建RPN中的层结构, 即所谓的实例化检具体的层
@@ -135,8 +135,8 @@ class RPN(snt.AbstractModule):
 
                 If training is True, then some more Tensors are added to the
                 prediction dictionary to be used for calculating the loss.
-                TODO: 训练的时候会有额外的一些预测用来计算损失
-                FIXME: 可以看下面的loss部分的介绍, 是需要这些值的
+                训练的时候会有额外的一些预测用来计算损失, 可以看下面的loss部分的介绍, 是需
+                要这些值的
 
                 rpn_cls_prob: A Tensor with the probability of being
                     background and foreground for each anchor.
@@ -230,14 +230,14 @@ class RPN(snt.AbstractModule):
         prediction_dict['proposals'] = proposal_prediction['proposals']
         prediction_dict['scores'] = proposal_prediction['scores']
 
-        # TODO: 关于debug参数, 有何作用?
         if self._debug:
             prediction_dict['proposal_prediction'] = proposal_prediction
 
         if gt_boxes is not None:
             # When training we use a separate module to calculate the target
             # values we want to output.
-            # 训练的时候, 使用一个独立的模块来计算想要的目标输出值
+            # 训练的时候, 使用一个独立的模块来计算想要的目标输出值(也就是真实框对anchors的
+            # 对应数据)
             # labels, bbox_targets, max_overlap
             (rpn_cls_target, rpn_bbox_target,
              rpn_max_overlap) = self._anchor_target(
@@ -248,8 +248,8 @@ class RPN(snt.AbstractModule):
             prediction_dict['rpn_cls_target'] = rpn_cls_target
             prediction_dict['rpn_bbox_target'] = rpn_bbox_target
 
-            # TODO: 这里的rpn_max_overlap代表的是什么
-            # FIXME: 表示anchors对应的最大的IoU的真实框索引
+            # ques: 这里的rpn_max_overlap代表的是什么
+            # ans: 表示anchors对应的最大的IoU的真实框索引
             if self._debug:
                 prediction_dict['rpn_max_overlap'] = rpn_max_overlap
                 variable_summaries(rpn_bbox_target, 'rpn_bbox_target', 'full')
@@ -291,11 +291,11 @@ class RPN(snt.AbstractModule):
                 proposal重叠比例最大的ground truth.
                 如果proposal的最大IoU大于0.5则为目标(前景), 标签值(label)为对应
                 ground truth的目标分类如果IoU小于0.5且大于0.1则为背景，标签值为0
-                todo: 这里的-1该如何理解?
+                ques: 这里的-1该如何理解?
+                ans: 要忽略的部分, 因为并不总是所有的提案都要被用到
             rpn_bbox_target: Bounding box output delta target for rpn.
                 Shape: (num_anchors, 4)
                 这里输出的边界框的目标偏移量.
-                todo: 这里应该怎么理解?
             rpn_bbox_pred: Bounding box output delta prediction for rpn.
                 Shape: (num_anchors, 4)
                 边界框的输出预测偏移量
@@ -330,7 +330,8 @@ class RPN(snt.AbstractModule):
             # We need to transform `labels` to `cls_score` shape.
             # convert [1, 0] to [[0, 1], [1, 0]] for ce with logits.
             # 对于各个类别的分数匹配对应的标签, 对标签进行one-hot编码
-            # todo: 目的是什么
+            # ques: 目的是什么
+            # ans: 计算交叉熵是需要使用onehot编码的
             cls_target = tf.one_hot(labels, depth=2)
 
             # Equivalent to log loss

@@ -97,7 +97,7 @@ def decode(roi, deltas, variances=None):
 def clip_boxes(bboxes, imshape):
     """
     Clips bounding boxes to image boundaries based on image shape.
-    对四个坐标值超出图像大小的的进行调整
+    对四个坐标值超出图像大小的的进行调整, 超出的, 以图像边界为准
     直接判断与图像宽高的大小关系
 
     Args:

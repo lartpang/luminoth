@@ -60,6 +60,7 @@ class RPNTarget(snt.AbstractModule):
         labels: label for each anchor
         bbox_targets: bbox regresion values for each anchor
     """
+
     def __init__(self, num_anchors, config, seed=None, name='anchor_target'):
         super(RPNTarget, self).__init__(name=name)
         self._num_anchors = num_anchors
@@ -142,10 +143,10 @@ class RPNTarget(snt.AbstractModule):
         )
 
         # We (force) reshape the filter so that we can use it as a boolean mask
-        # 强制展开(虽然本身就是一维的吧?)为一维, 以作为掩膜
+        # 强制展开(虽然本身就是一维的吧?)为一维, 以作为掩膜, 来确定有效的图像内的anchors
         anchor_filter = tf.reshape(anchor_filter, [-1])
         # Filter anchors.
-        # 保留有效的anchors
+        # 仅保留图像内的anchors (num_anchors, 4)
         anchors = tf.boolean_mask(
             all_anchors, anchor_filter, name='filter_anchors')
 
@@ -153,7 +154,10 @@ class RPNTarget(snt.AbstractModule):
         # fill在这里创建了一个用标量-1, 填充的固定大小的张量
         # gather利用索引重新组建了一个张量, 这里只是抽取了all_anchors的形状的第一维度大小,
         # 以此确定的张量, 用-1填充
+        # 这里也就是为了得到对于每个anchor所对应的种类标签, 预先设定为-1, 后续在进行更改
+        # (num_anchors. )
         labels = tf.fill((tf.gather(tf.shape(all_anchors), [0])), -1)
+        # 仅保留图像内的anchors的类别
         labels = tf.boolean_mask(labels, anchor_filter, name='filter_labels')
 
         # Intersection over union (IoU) overlap between the anchors and the
@@ -162,9 +166,10 @@ class RPNTarget(snt.AbstractModule):
         overlaps = bbox_overlap_tf(tf.to_float(anchors), tf.to_float(gt_boxes))
 
         # Generate array with the IoU value of the closest GT box for each
-        # anchor. 获取对每个anchors的最大IoU的真实框
+        # anchor. 获取每个anchors对于所有的真实框的最大IoU值
         # reduce_max 计算指定维度的最大值
         max_overlaps = tf.reduce_max(overlaps, axis=1)
+
         # 这里为负样本确定了标签
         if not self._clobber_positives:
             # 首先设定背景标签, 这样可以使得正样本可以覆盖负样本, 这样可以保证每个ground
@@ -185,47 +190,61 @@ class RPNTarget(snt.AbstractModule):
                 condition=negative_overlap_nonzero,
                 x=tf.zeros(tf.shape(labels)), y=tf.to_float(labels)
             )
+
+        # 这里是要以真实框的角度来确定正样本#########################################
         # Get the value of the max IoU for the closest anchor for each gt.
-        # 每个anchors对应的相交最大IoU
+        # 每个真实框对应的最大IoU值
+        # tf.shape = [num_gt]
         gt_max_overlaps = tf.reduce_max(overlaps, axis=0)
 
         # Find all the indices that match (at least one, but could be more).
-        # 找到所有匹配的, 也就是针对每个anchors对应的IoU最大的真实框的位置(逻辑张量)
-        # TODO: 这里的squeeze没看明白使用的含义
+        # 找到所有匹配的的位置, 也就是针对每个真实框对应的IoU最大值的匹配结果(逻辑张量)
+        # ques: 这里的squeeze没看明白使用的含义
+        # ans: 消除冗余的维度
         gt_argmax_overlaps = tf.squeeze(tf.equal(overlaps, gt_max_overlaps))
+
         # where只有一个输入的时候, 表示是条件变量, 只返回自身真值的位置, 各个对应关系对应的
-        # 位置[[x,y],...,[x,y]], 这里得到的是第一列的值
+        # 位置[[x,y],...,[x,y]], 这里得到的是第一列的值, 形如[x, x, x, ..., x]
+        # 第一列代表着有哪些anchors有真实框对应
         gt_argmax_overlaps = tf.where(gt_argmax_overlaps)[:, 0]
+
         # Eliminate duplicates indices.
-        # 消除重复的索引, 这里得到的是不再重复的元素值组成的张量
+        # 消除重复的索引, 这里得到的是**不再重复的元素值**组成的张量
         # 因为同一个anchor可能对应多个真实框, 这里得到的是消除了重复的最终的anchor
+        # (1, num_unique_anchors), 保留下的是有真实框对应的anchors序号
         gt_argmax_overlaps, _ = tf.unique(gt_argmax_overlaps)
+
         # Order the indices for sparse_to_dense compatibility
-        # todo: 不太理解这里, 因为gt_argmax_overlaps这里已经是一个一维的张量
-        # 一种理解, 这里应该是只是实现了一个排序
+        # ques: 不太理解这里, 因为gt_argmax_overlaps这里已经是一个一维的张量
+        # ans: 这里应该是只是实现了一个排序
         # 这个函数的作用是返回 input 中每行(这里就是每个anchor所对应的IoU)最大的 k 个数，
         # 并且返回它们所在位置的索引, 这里只是承接了数
         gt_argmax_overlaps, _ = tf.nn.top_k(
             gt_argmax_overlaps, k=tf.shape(gt_argmax_overlaps)[-1])
-        # 沿着指定的轴进行反转
-        # todo: 这里的操作不太理解
+
+        # 沿着指定的轴进行反转, 现在是坐标值x从小到大排列了
+        # (1, num_unique_anchors)
         gt_argmax_overlaps = tf.reverse(gt_argmax_overlaps, [0])
 
         # Foreground label: for each ground-truth, anchor with highest overlap.
         # When the argmax is many items we use all of them (for consistency).
         # We set 1 at gt_argmax_overlaps_cond indices
+        # 在gt_argmax_overlap(也就是真实框对应IOU最大的的anchors)所对应的位置, 替换为
+        # true, (1, num_anchors)
         gt_argmax_overlaps_cond = tf.sparse_to_dense(
             gt_argmax_overlaps, tf.shape(labels, out_type=tf.int64),
             True, default_value=False
         )
 
-        # 为剩下的有着最大值(真值)的位置上返回1, 其余保留
-        # 对每个标定的ground truth，与其重叠比例IoU最大的anchor记为正样本
+        # 为剩下的真实框对应的最大IoU的anchors的位置上返回1, 这部分当做正样本, 其余label不
+        # 变
+        # **对每个标定的ground truth，与其重叠比例IoU最大的anchor记为正样本**
         labels = tf.where(
             condition=gt_argmax_overlaps_cond,
             x=tf.ones(tf.shape(labels)), y=tf.to_float(labels)
         )
 
+        # 这里是从anchors的角度开始确定正样本#######################################
         # Foreground label: above threshold Intersection over Union (IoU)
         # First we get an array with True where IoU is greater or equal than
         # self._positive_overlap
@@ -271,7 +290,7 @@ class RPNTarget(snt.AbstractModule):
             disable_fg_inds = disable_fg_inds[:disable_place]
             # Order the indices for sparse_to_dense compatibility
             # 得到每行最大的k个值, 这里的k的大小等于输入的第二个维度
-            # todo: 这里的k的设定有什么含义?
+            # ques: 这里的k的设定有什么含义?
             disable_fg_inds, _ = tf.nn.top_k(
                 disable_fg_inds, k=tf.shape(disable_fg_inds)[-1])
             disable_fg_inds = tf.reverse(disable_fg_inds, [0])

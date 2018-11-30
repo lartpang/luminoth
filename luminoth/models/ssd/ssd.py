@@ -1,21 +1,19 @@
 import numpy as np
 import sonnet as snt
 import tensorflow as tf
-
 from sonnet.python.modules.conv import Conv2D
 
 from luminoth.models.ssd.feature_extractor import SSDFeatureExtractor
 from luminoth.models.ssd.proposal import SSDProposal
 from luminoth.models.ssd.target import SSDTarget
-from luminoth.models.ssd.utils import (
-    generate_raw_anchors, adjust_bboxes
-)
-from luminoth.utils.losses import smooth_l1_loss
+from luminoth.models.ssd.utils import (adjust_bboxes, generate_raw_anchors)
 from luminoth.utils.bbox_transform import clip_boxes
+from luminoth.utils.losses import smooth_l1_loss
 
 
 class SSD(snt.AbstractModule):
-    """SSD: Single Shot MultiBox Detector
+    """
+    SSD: Single Shot MultiBox Detector
     """
 
     def __init__(self, config, name='ssd'):
@@ -49,15 +47,21 @@ class SSD(snt.AbstractModule):
 
         Returns:
             A dictionary with the following keys:
-            predictions:
-            proposal_prediction: A dictionary with:
-                proposals: The proposals of the network after appling some
-                    filters like negative area; and NMS
-                proposals_label: A tensor with the label for each proposal.
-                proposals_label_prob: A tensor with the softmax probability
-                    for the label of each proposal.
-            bbox_offsets: A tensor with the predicted bbox_offsets
-            class_scores: A tensor with the predicted classes scores
+            predictions: 预测结果
+                proposal_prediction: 关于提案的信息
+                A dictionary with:
+                    proposals: The proposals of the network after appling some
+                        filters like negative area; and NMS
+                        最终保留下来的提案
+                    proposals_label: A tensor with the label for each proposal.
+                        对于每个提案的标签判定
+                    proposals_label_prob: A tensor with the softmax probability
+                        for the label of each proposal.
+                        对于每个提案的softmax概率
+                bbox_offsets: A tensor with the predicted bbox_offsets
+                    预测的边界框的偏移量
+                class_scores: A tensor with the predicted classes scores
+                    预测的类列得分/置信度
         """
         # Reshape image
         self.image_shape.append(3)  # Add channels to shape
@@ -68,28 +72,39 @@ class SSD(snt.AbstractModule):
         self.feature_extractor = SSDFeatureExtractor(
             self._config.base_network, parent_name=self.module_name
         )
+        # 获取特征图
+        # ques: 这里的特征图对应的是多个卷积层还是只是一个卷积层的输出
+        # ans: 是所有需要研究的特征图
         feature_maps = self.feature_extractor(image, is_training=is_training)
 
         # Build a MultiBox predictor on top of each feature layer and collect
         # the bounding box offsets and the category score logits they produce
         bbox_offsets_list = []
         class_scores_list = []
+        # 对于不同的输出特征图进行遍历, 进行预测
         for i, feat_map in enumerate(feature_maps.values()):
             multibox_predictor_name = 'MultiBox_{}'.format(i)
             with tf.name_scope(multibox_predictor_name):
+                # 这里使得预测的结果的数量和后面生成anchors的数量是一致的,
+                # 并且也是对应的
                 num_anchors = self._anchors_per_point[i]
 
                 # Predict bbox offsets
+                # 用3x3卷积预测坐标偏移量
                 bbox_offsets_layer = Conv2D(
                     num_anchors * 4, [3, 3],
                     name=multibox_predictor_name + '_offsets_conv'
                 )(feat_map)
+
+                # (HxWxnum_anchors, 4) 这里的H,W应该是和上面特征图的H,W是一致的
                 bbox_offsets_flattened = tf.reshape(
                     bbox_offsets_layer, [-1, 4]
                 )
+                # 获取所有的预测框的偏移量
                 bbox_offsets_list.append(bbox_offsets_flattened)
 
                 # Predict class scores
+                # 使用3x3卷积预测类别(包含背景类)
                 class_scores_layer = Conv2D(
                     num_anchors * (self._num_classes + 1), [3, 3],
                     name=multibox_predictor_name + '_classes_conv',
@@ -97,34 +112,48 @@ class SSD(snt.AbstractModule):
                 class_scores_flattened = tf.reshape(
                     class_scores_layer, [-1, self._num_classes + 1]
                 )
+                # 获取所有的预测框类别判定
                 class_scores_list.append(class_scores_flattened)
+
+        # 组合所有的预测边界框偏移量, 类别得分, 并计算对应的softmax概率
+        # (num_bboxes, 4) (相对于后面要生成的anchors) ###########################
         bbox_offsets = tf.concat(
             bbox_offsets_list, axis=0, name='concatenate_all_bbox_offsets'
         )
+        # (num_bboxes, 21) 对应得分
         class_scores = tf.concat(
             class_scores_list, axis=0, name='concatenate_all_class_scores'
         )
+        # (num_bboxes, 21) 对应概率 (也是在针对后面要生成的anchors) ###############
         class_probabilities = tf.nn.softmax(
             class_scores, axis=-1, name='class_probabilities_softmax'
         )
 
+        # 这里的anchors不同于上面的预测结果, 而是根据特征图生成的参考框 ###############
+
         # Generate anchors (generated only once, therefore we use numpy)
+        # 基于各个卷积层的特征图, 使用anchor参数, 生成所有的anchors(坐标基于特征图)
         raw_anchors_per_featmap = generate_raw_anchors(
             feature_maps, self._anchor_min_scale, self._anchor_max_scale,
             self._anchor_ratios, self._anchors_per_point
         )
+
         anchors_list = []
+        # 遍历所有的特征图, 将其映射到原图, 并进行剪裁
         for i, (feat_map_name, feat_map) in enumerate(feature_maps.items()):
             # TODO: Anchor generation should be simpler. We should create
             #       them in image scale from the start instead of scaling
             #       them to their feature map size.
+            # 这里的feat_map大大小应该是(num_batch, height, weight, channel)
             feat_map_shape = feat_map.shape.as_list()[1:3]
+            # anchors从特征图映射到原图(坐标基于原图)
             scaled_bboxes = adjust_bboxes(
                 raw_anchors_per_featmap[feat_map_name], feat_map_shape[0],
                 feat_map_shape[1], self.image_shape[0], self.image_shape[1]
             )
             clipped_bboxes = clip_boxes(scaled_bboxes, self.image_shape)
             anchors_list.append(clipped_bboxes)
+        # 将所有的anchors的原图上的坐标结果进行合并
         anchors = np.concatenate(anchors_list, axis=0)
         anchors = tf.convert_to_tensor(anchors, dtype=tf.float32)
 
@@ -139,6 +168,13 @@ class SSD(snt.AbstractModule):
             target_creator = SSDTarget(
                 self._num_classes, self._config.target, self._config.variances
             )
+            # 返回各个anchor对应的类别标签(0~21),以及前景anchors位置上更新的对应真实框
+            # 相对自身坐标的偏移量和缩放量(其余位置为0)
+            # 这里的类别标签, 是对那些
+            # 1. 在所有真实框中的最大的IoU值大于阈值的anchors,
+            # 2. 以及那些所有真实框的最好anchors
+            # 根据这些对应的最好的真实框来确定的, 这里使用IoU来确定的正样本的
+            # class_targets, 和预测值无关, 只是背景样本里用了下预测的类别概率
             class_targets, bbox_offsets_targets = target_creator(
                 class_probabilities, anchors, gt_boxes
             )
@@ -147,11 +183,19 @@ class SSD(snt.AbstractModule):
             # training due to hard negative mining. We use class_targets to
             # know which ones to ignore (they are marked as -1 if they are to
             # be ignored)
+            # 确定前景anchors对应的各类数据, 包括:
+            #   参考的anchors
+            #   真实框 相对于anchors的偏移缩放
+            #   anchors的对应的类别标签
+            #   anchors对应的类别预测得分
+            #   anchors对应的类别预测概率
+            #   预测出的 提案框相对于anchors的偏移缩放
+            # note: 这里对于每一个anchors都是预测一组偏移量, 是一一对应的,
+            #  而且这里实际上只保留了对应与类别标签大于等于0的anchors对应的结果
+            # boolean_mask 只保留filter上为True的对应的数据
             with tf.name_scope('hard_negative_mining_filter'):
                 predictions_filter = tf.greater_equal(class_targets, 0)
-
-                anchors = tf.boolean_mask(
-                    anchors, predictions_filter)
+                anchors = tf.boolean_mask(anchors, predictions_filter)
                 bbox_offsets_targets = tf.boolean_mask(
                     bbox_offsets_targets, predictions_filter)
                 class_targets = tf.boolean_mask(
@@ -164,18 +208,24 @@ class SSD(snt.AbstractModule):
                     bbox_offsets, predictions_filter)
 
             # Add target tensors to prediction dict
+            # 和真实值有关系的几个数据
             prediction_dict['target'] = {
-                'cls': class_targets,
+                'cls'         : class_targets,
                 'bbox_offsets': bbox_offsets_targets,
-                'anchors': anchors
+                'anchors'     : anchors
             }
 
         # Add network's raw output to prediction dict
+        # 和预测相关的几个数据
         prediction_dict['cls_pred'] = class_scores
         prediction_dict['loc_pred'] = bbox_offsets
 
+        # 到此为止, 得到了所有的anchors调整后的预测结果, 但是这时候的结果并没有其他的处理
+        # 只是在训练的时候就可以了, 但是预测或者调试输出的时候, 数据还需要进行进一步筛选
+
         # We generate proposals when predicting, or when debug=True for
         # generating visualizations during training.
+        # 进入这里的都是调整后的预测结果, 可以认为是网络的预测候选, 后续操作主要是挑选
         if not is_training or self._debug:
             proposals_creator = SSDProposal(
                 self._num_classes, self._config.proposals,
@@ -195,7 +245,8 @@ class SSD(snt.AbstractModule):
         return prediction_dict
 
     def loss(self, prediction_dict, return_all=False):
-        """Compute the loss for SSD.
+        """
+        Compute the loss for SSD.
 
         Args:
             prediction_dict: The output dictionary of the _build method from
@@ -211,34 +262,39 @@ class SSD(snt.AbstractModule):
         """
 
         with tf.name_scope('losses'):
-
+            # 类别预测得分结果
             cls_pred = prediction_dict['cls_pred']
-            cls_target = tf.cast(
-                prediction_dict['target']['cls'], tf.int32
-            )
+            # 调整后的anchors对应的类别标签(这个是直接从真实框身上得来的)
+            cls_target = tf.cast(prediction_dict['target']['cls'], tf.int32)
             # Transform to one-hot vector
             cls_target_one_hot = tf.one_hot(
                 cls_target, depth=self._num_classes + 1,
                 name='cls_target_one_hot'
             )
 
+            ###################################################################
+            # 这里计算了对应的L_conf ############################################
+            ###################################################################
+
             # We get cross entropy loss of each proposal.
             # TODO: Optimization opportunity: We calculate the probabilities
             #       earlier in the program, so if we used those instead of the
             #       logits we would not have the need to do softmax here too.
+            # 得到对于每个提案的分类损失
             cross_entropy_per_proposal = (
                 tf.nn.softmax_cross_entropy_with_logits(
                     labels=cls_target_one_hot, logits=cls_pred
                 )
             )
+
             # Second we need to calculate the smooth l1 loss between
             # `bbox_offsets` and `bbox_offsets_targets`.
+            # 一个是预测的偏移缩放值, 一个是真实框的偏移缩放值
             bbox_offsets = prediction_dict['loc_pred']
-            bbox_offsets_targets = (
-                prediction_dict['target']['bbox_offsets']
-            )
+            bbox_offsets_targets = (prediction_dict['target']['bbox_offsets'])
 
             # We only want the non-background labels bounding boxes.
+            # 在预测框和真实框中筛选前景对应的偏移缩放值,
             not_ignored = tf.reshape(tf.greater(cls_target, 0), [-1])
             bbox_offsets_positives = tf.boolean_mask(
                 bbox_offsets, not_ignored, name='bbox_offsets_positives')
@@ -247,24 +303,31 @@ class SSD(snt.AbstractModule):
                 name='bbox_offsets_target_positives'
             )
 
+            ###################################################################
+            # 这里计算了L_{loc}(x,l,g) #########################################
+            ###################################################################
+
             # Calculate the smooth l1 regression loss between the flatten
             # bboxes offsets  and the labeled targets.
+            # 得到对于每个提案的回归损失
             reg_loss_per_proposal = smooth_l1_loss(
                 bbox_offsets_positives, bbox_offsets_target_positives)
 
+            # 前面的计算只是将对应的项进行了计算, 还需要进行求和
             cls_loss = tf.reduce_sum(cross_entropy_per_proposal)
             bbox_loss = tf.reduce_sum(reg_loss_per_proposal)
 
             # Following the paper, set loss to 0 if there are 0 bboxes
             # assigned as foreground targets.
+            # 如果真实框中, 没有前景类别, 则将损失设定为0, 存在前景类别的时候, 加权求和
             safety_condition = tf.not_equal(
                 tf.shape(bbox_offsets_positives)[0], 0
             )
             final_loss = tf.cond(
                 safety_condition,
                 true_fn=lambda: (
-                    (cls_loss + bbox_loss * self._loc_loss_weight) /
-                    tf.cast(tf.shape(bbox_offsets_positives)[0], tf.float32)
+                        (cls_loss + bbox_loss * self._loc_loss_weight) /
+                        tf.cast(tf.shape(bbox_offsets_positives)[0], tf.float32)
                 ),
                 false_fn=lambda: 0.0
             )
@@ -293,8 +356,8 @@ class SSD(snt.AbstractModule):
             if return_all:
                 return {
                     'total_loss': total_loss,
-                    'cls_loss': cls_loss,
-                    'bbox_loss': bbox_loss
+                    'cls_loss'  : cls_loss,
+                    'bbox_loss' : bbox_loss
                 }
             else:
                 return total_loss

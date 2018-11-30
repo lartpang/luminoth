@@ -70,6 +70,7 @@ class FasterRCNN(snt.AbstractModule):
     def _build(self, image, gt_boxes=None, is_training=False):
         """
         Returns bounding boxes and classification probabilities.
+        返回边界框和分类的概率
 
         Args:
             image: A tensor with the image.
@@ -96,13 +97,16 @@ class FasterRCNN(snt.AbstractModule):
 
         # Set rank and last dimension before using base network
         # TODO: Why does it loose information when using queue?
+        # 确定输入数据
         image.set_shape((None, None, 3))
 
+        # 确定基础特征提取网络
         conv_feature_map = self.base_network(
             tf.expand_dims(image, 0), is_training=is_training
         )
 
         # The RPN submodule which generates proposals of objects.
+        # 确定RPN和RCNN
         self._rpn = RPN(
             self._num_anchors, self._config.model.rpn,
             debug=self._debug, seed=self._seed
@@ -115,6 +119,7 @@ class FasterRCNN(snt.AbstractModule):
                 debug=self._debug, seed=self._seed
             )
 
+        # 定出宽高参数
         image_shape = tf.shape(image)[0:2]
 
         variable_summaries(
@@ -122,6 +127,7 @@ class FasterRCNN(snt.AbstractModule):
         )
 
         # Generate anchors for the image based on the anchor reference.
+        # 基于特征图生成anchors
         all_anchors = self._generate_anchors(tf.shape(conv_feature_map))
         rpn_prediction = self._rpn(
             conv_feature_map, image_shape, all_anchors,
@@ -261,6 +267,7 @@ class FasterRCNN(snt.AbstractModule):
     def _generate_anchors(self, feature_map_shape):
         """Generate anchor for an image.
 
+
         Using the feature map, the output of the pretrained network for an
         image, and the anchor_reference generated using the anchor config
         values. We generate a list of anchors.
@@ -280,10 +287,14 @@ class FasterRCNN(snt.AbstractModule):
         with tf.variable_scope('generate_anchors'):
             grid_width = feature_map_shape[2]  # width
             grid_height = feature_map_shape[1]  # height
+
+            # 这里计算的是各个特征图上的点所对应的原图上的坐标, 注意, 这里是因为从0开始, 所
+            # 以直接乘以缩放因子可以得到对应原图上的坐标
             shift_x = tf.range(grid_width) * self._anchor_stride
             shift_y = tf.range(grid_height) * self._anchor_stride
             shift_x, shift_y = tf.meshgrid(shift_x, shift_y)
 
+            # meshgrid之后，这里的x，y对应之间是组合数的关系
             shift_x = tf.reshape(shift_x, [-1])
             shift_y = tf.reshape(shift_y, [-1])
 
@@ -295,7 +306,22 @@ class FasterRCNN(snt.AbstractModule):
             shifts = tf.transpose(shifts)
             # Shifts now is a (H x W, 4) Tensor
 
+            # 理解expand_dims最直观的方式就是从形状上来理解，实际上就是在对应的位置添加一个长为1的维
+            # 度
             # Expand dims to use broadcasting sum.
+            # # 't' is a tensor of shape [2]
+            # shape(expand_dims(t, 0)) ==> [1, 2]
+            # shape(expand_dims(t, 1)) ==> [2, 1]
+            # shape(expand_dims(t, -1)) ==> [2, 1]
+            # # 't2' is a tensor of shape [2, 3, 5]
+            # shape(expand_dims(t2, 0)) ==> [1, 2, 3, 5]
+            # shape(expand_dims(t2, 2)) ==> [2, 3, 1, 5]
+            # shape(expand_dims(t2, 3)) ==> [2, 3, 5, 1]
+
+            # [1, 9, 4](每一个中心点对应的9个anchors相对中心点的坐标偏移量) + 
+            # [14x14, 1, 4](所有中心点的的坐标) =
+            # [14x14, 9, 4](特征图上所有点对应的所有anchors原图坐标集合集合)
+            # 这里写的很好
             all_anchors = (
                 np.expand_dims(self._anchor_reference, axis=0) +
                 tf.expand_dims(shifts, axis=1)
