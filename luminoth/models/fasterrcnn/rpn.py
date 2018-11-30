@@ -236,7 +236,8 @@ class RPN(snt.AbstractModule):
         if gt_boxes is not None:
             # When training we use a separate module to calculate the target
             # values we want to output.
-            # 训练的时候, 使用一个独立的模块来计算想要的目标输出值
+            # 训练的时候, 使用一个独立的模块来计算想要的目标输出值(也就是真实框对anchors的
+            # 对应数据)
             # labels, bbox_targets, max_overlap
             (rpn_cls_target, rpn_bbox_target,
              rpn_max_overlap) = self._anchor_target(

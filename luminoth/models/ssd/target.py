@@ -89,6 +89,11 @@ class SSDTarget(snt.AbstractModule):
         # 对于每个eanchor和所有真实框的IoU的 最大IoU值
         max_overlaps = tf.reduce_max(overlaps, axis=1)
 
+        #######################################################################
+        # 这里开始从anchors的角度来思考, 考虑和它最好的真实框所对应的IoU, 超过阈值,
+        # anchors就作为正样本
+        #######################################################################
+
         # Get the index of the best gt_box for each anchor.
         # 对于每个anchor最为接近的真实框
         # (num_anchors, ), 每个元素表示真实框的 对应序号
@@ -120,6 +125,11 @@ class SSDTarget(snt.AbstractModule):
             y=anchors_label
         )
 
+        #######################################################################
+        # 这里开始从真实框的角度来思考, 防止有真实框没有对应的anchors, 所以要考虑和真实框对
+        # 应的最好的anchors作为正样本
+        #######################################################################
+
         # (num_gt, ) 对于每个真实框而言, 最好的anchor的位置
         best_anchor_idxs = tf.argmax(overlaps, axis=0)
         # 使用得到的anchors的位置, 生成一个稀疏张量, 大小为(num_anchors, ),
@@ -148,6 +158,8 @@ class SSDTarget(snt.AbstractModule):
         # [-1, 1~20(前景anchor)] =====> [-1, 1~20(+对于每个真实框最接近的anchor)]
 
         # 修改anchors_label中, 每个真实框对应的最好的anchor的标签为对应的类别
+        # 注意, 到这里的时候, 可能会觉得存在一个anchors会对应多个类别, 但是没关系, 这里是一
+        # 个更新操作, 这里的优先级更高, 可以覆盖之前的判定
         anchors_label = tf.where(
             condition=is_best_box,
             x=best_anchors_gt_labels,
@@ -157,25 +169,28 @@ class SSDTarget(snt.AbstractModule):
 
         # Use the worst backgrounds (the bgs whose probability of being fg is
         # the greatest).
-        # (num_anchors, (num_classes+1)[1:]), 选择前景类
+        # (num_anchors, (num_classes+1)[1:]), 选择各个anchors的前景类别的对应概率
         cls_probs = probs[:, 1:]
-        # 得到所有anchors中的前景anchors的针对各个类别的最大概率
+        # 得到所有anchors的针对各个前景类别的最大概率
         max_cls_probs = tf.reduce_max(cls_probs, axis=1)
 
         # Exclude boxes with IOU > `background_threshold_high` with any GT.
-        # 最终被认定为背景的anchors, 是和所有真实框的最大IoU值小于背景阈值, 而且又是标签
-        # 被标定为小于等于0的anchors
+        # 最终被认定为背景的anchors, 是和所有真实框的最大IoU值小于背景阈值(0.2), 而且又是
+        # 标签被标定为小于等于0的anchors
         # 标签小于等于0, 实际上就是标签小于0, 因为标签为0尚未确定
         iou_less_than_bg_tresh_high_filter = tf.less_equal(
             max_overlaps, self._background_threshold_high
         )
+
+        # 这里确定了没有被通过IoU来判定为前景类别的anchors, 从中选择阈值小于背景上限阈值
+        # 的, 作为后续的操作对象
         bg_anchors = tf.less_equal(anchors_label, 0)
         bg_overlaps_filter = tf.logical_and(
             iou_less_than_bg_tresh_high_filter, bg_anchors
         )
 
-        # 在和真实框的IoU小于阈值且又标记为-1的anchors的位置上, 保留可能是前景的对应各个
-        # 类别的最大概率, 其余的标记为 -1
+        # 在非前景anchors中选择和真实框的IoU小于阈值的, 在其位置上, 保留其针对各个前景类
+        # 别的最大概率, 留作后面选择背景anchors用, 其余的标记为 -1
         # ques: 这里满足上面的条件的应该是对应的负样本/背景了呀, 怎么还保留可能的概率呢?
         # ans: 这里用作背景的anchors实际上是选择有着较大分类概率, 但是不接近真实框而且还
         #   标签小于-1的anchors
@@ -193,7 +208,8 @@ class SSDTarget(snt.AbstractModule):
 
         # 得到背景数量=3*num_fg
         num_bg = tf.cast(num_fg * self._hard_negative_ratio, tf.int32)
-        # 从max_clas_prob里选择前num_bg最大概率的anchors
+        # 从max_clas_prob里选择前num_bg(各个类别概率最大值)的anchors作为背景anchors
+        # 索引
         top_k_bg = tf.nn.top_k(max_cls_probs, k=num_bg)
         # 将对应的anchors位置标定位true, 这里当做下面的一个条件
         set_bg = tf.sparse_to_dense(
@@ -228,8 +244,8 @@ class SSDTarget(snt.AbstractModule):
 
         # Get the corresponding ground truth box only for the anchors with
         # target.
-        # 从每个anchors对应的最好的真实框索引中选择前景anchors对应的真实框索引, 进而
-        # 确定坐标
+        # 从每个anchors对应的最好的真实框索引中, 选择所有前景anchors对应的真实框索引, 进而
+        # 确定对应的真实框坐标
         gt_boxes_idxs = tf.gather(
             best_gtbox_for_anchors_idx,
             anchors_with_target_idx
@@ -239,14 +255,14 @@ class SSDTarget(snt.AbstractModule):
             gt_boxes[:, :4], gt_boxes_idxs
         )
         # We create the same array but with the anchors
-        # 确定前景anchors的对应的anchor在原图的坐标
+        # 确定所有前景anchors的对应的anchor在原图的坐标
         anchors_with_target = tf.gather_nd(
             all_anchors,
             anchors_with_target_idx
         )
 
         # We create our targets with bbox_transform
-        # 获取前景anchors对应的真实框相对于自身坐标的偏移量和缩放量
+        # 获取所有前景anchors对应的真实框相对于自身坐标的偏移量和缩放量
         bbox_targets = encode(
             anchors_with_target,
             anchors_gt_boxes,

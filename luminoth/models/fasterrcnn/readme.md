@@ -95,3 +95,7 @@
     all_losses_items = (
         list(rpn_loss_dict.items()) + list(rcnn_loss_dict.items()))  
     ```
+    
+要注意的几点:
+
+代码中涉及到了三类数据, 参考anchors, 预测的预测框, 真实框, 这些数据中, 从真实框的角度得到的几个数据都是有后缀`_target`的

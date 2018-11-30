@@ -155,7 +155,7 @@ class RPNTarget(snt.AbstractModule):
         # gather利用索引重新组建了一个张量, 这里只是抽取了all_anchors的形状的第一维度大小,
         # 以此确定的张量, 用-1填充
         # 这里也就是为了得到对于每个anchor所对应的种类标签, 预先设定为-1, 后续在进行更改
-        # (1, num_anchors)
+        # (num_anchors. )
         labels = tf.fill((tf.gather(tf.shape(all_anchors), [0])), -1)
         # 仅保留图像内的anchors的类别
         labels = tf.boolean_mask(labels, anchor_filter, name='filter_labels')
@@ -166,7 +166,7 @@ class RPNTarget(snt.AbstractModule):
         overlaps = bbox_overlap_tf(tf.to_float(anchors), tf.to_float(gt_boxes))
 
         # Generate array with the IoU value of the closest GT box for each
-        # anchor. 获取对每个anchors的最大IoU值
+        # anchor. 获取每个anchors对于所有的真实框的最大IoU值
         # reduce_max 计算指定维度的最大值
         max_overlaps = tf.reduce_max(overlaps, axis=1)
 
